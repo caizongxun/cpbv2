@@ -1,0 +1,70 @@
+{
+  "model_architecture": {
+    "input_size": 30,
+    "lookback_period": 60,
+    "lstm_layers": 2,
+    "lstm_units": [96, 64],
+    "bidirectional": true,
+    "dropout_lstm": 0.2,
+    "dropout_dense": 0.1,
+    "dense_units": 32,
+    "output_size": 1,
+    "activation_lstm": "relu",
+    "activation_dense": "relu",
+    "activation_output": "linear"
+  },
+  "training": {
+    "batch_size": 32,
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "optimizer": "adam",
+    "loss_function": "mse",
+    "metrics": ["mae", "mape"],
+    "early_stopping": {
+      "enabled": true,
+      "monitor": "val_loss",
+      "patience": 15,
+      "min_delta": 0.0001,
+      "restore_best_weights": true
+    },
+    "mixed_precision": false,
+    "gradient_clip": 1.0
+  },
+  "data_split": {
+    "train_ratio": 0.70,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "time_series_split": true,
+    "shuffle": false
+  },
+  "feature_engineering": {
+    "num_features_total": 35,
+    "num_features_after_selection": 30,
+    "feature_selection_method": "pca",
+    "normalization": "minmax",
+    "norm_range": [0, 1]
+  },
+  "regularization": {
+    "l1_lambda": 0.0,
+    "l2_lambda": 0.001,
+    "weight_decay": 0.001
+  },
+  "hardware": {
+    "device": "cuda",
+    "mixed_precision_dtype": "float32",
+    "num_workers": 2,
+    "pin_memory": true
+  },
+  "prediction": {
+    "forecast_horizon": 7,
+    "target_type": "price_change_percent",
+    "threshold_up": 0.0,
+    "threshold_down": -0.0
+  },
+  "evaluation": {
+    "metrics": ["rmse", "mae", "mape", "direction_accuracy", "auc"],
+    "min_direction_accuracy": 0.55,
+    "good_direction_accuracy": 0.65,
+    "max_mape": 0.05
+  }
+}
