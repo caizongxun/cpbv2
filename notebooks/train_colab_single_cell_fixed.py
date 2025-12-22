@@ -1,0 +1,462 @@
+# ============================================================================
+# CPB v2: 完整单 Cell 训练脚本 (修复版)
+# 直接复制粘贴到 Colab 执行！
+# ============================================================================
+
+print('='*70)
+print('CPB v2: 完整训练流程 (单 Cell 版本 - 修复版)')
+print('='*70)
+
+# STEP 0: 安装依赖
+print('\n[STEP 0] 安装依赖...')
+import subprocess
+import sys
+
+subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'torch', 'pandas', 'numpy', 'scikit-learn', 'requests'], check=False)
+
+print('✓ 依赖安装完成')
+
+# STEP 1: 导入库
+print('\n[STEP 1] 导入库...')
+
+import os
+import json
+import time
+import logging
+from datetime import datetime, timedelta, timezone
+import pandas as pd
+import numpy as np
+import requests
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import PCA
+
+print('✓ 所有库导入完成')
+
+# STEP 2: 配置
+print('\n[STEP 2] 配置参数...')
+
+CONFIG = {
+    'coins': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],  # 修改币种在这里
+    'timeframes': ['15m', '1h'],
+    'epochs': 30,  # 修改训练轮数
+    'batch_size': 32,
+    'learning_rate': 0.001,
+    'lookback': 60,
+    'n_features': 30,
+    'use_dummy_data': False  # True=测试数据, False=真实数据
+}
+
+print(json.dumps(CONFIG, indent=2))
+
+# STEP 3: 数据采集器
+print('\n[STEP 3] 定义数据采集器...')
+
+class BinanceDataCollector:
+    """Binance API 数据采集器 - US版本"""
+    
+    BASE_URL = "https://api.binance.us/api/v3"
+    MAX_CANDLES = 1000
+    
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+    
+    def get_klines(self, symbol, interval="15m", limit=3000):
+        """下载 K 线数据"""
+        print(f'  ↳ 下载 {symbol} {interval}...')
+        
+        all_klines = []
+        # 修复：用 utcnow() 而不是 now(timezone.utc)
+        end_time = int(datetime.utcnow().timestamp() * 1000)
+        start_time = int((datetime.utcnow() - timedelta(days=90)).timestamp() * 1000)
+        current_start = start_time
+        
+        retry_count = 0
+        
+        while current_start < end_time and len(all_klines) < limit:
+            try:
+                params = {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "startTime": current_start,
+                    "limit": min(self.MAX_CANDLES, limit - len(all_klines))
+                }
+                
+                response = self.session.get(
+                    f"{self.BASE_URL}/klines",
+                    params=params,
+                    timeout=10
+                )
+                response.raise_for_status()
+                
+                klines = response.json()
+                if not klines:
+                    break
+                
+                all_klines.extend(klines)
+                current_start = int(klines[-1][0]) + 1
+                retry_count = 0
+                time.sleep(0.5)
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= 3:
+                    print(f'    ✗ 错误: {str(e)[:100]}')
+                    break
+                time.sleep(2 ** retry_count)
+        
+        if not all_klines:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(all_klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base', 'taker_buy_quote', 'ignore'
+        ])
+        
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
+        
+        df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].drop_duplicates().sort_values('timestamp').reset_index(drop=True)
+        
+        print(f'    ✓ 下载 {len(df)} 根 K 棒')
+        return df
+    
+    @staticmethod
+    def validate(df):
+        if len(df) < 100:
+            return False
+        if df[['open', 'high', 'low', 'close', 'volume']].isnull().any().any():
+            return False
+        return True
+
+print('✓ 数据采集器定义完成')
+
+# STEP 4: 特征工程
+print('\n[STEP 4] 定义特征工程...')
+
+class FeatureEngineer:
+    """技术指标计算"""
+    
+    def __init__(self, df):
+        self.df = df.copy()
+    
+    def calculate_all(self):
+        df = self.df
+        
+        # 移动平均
+        for period in [10, 20, 50, 100, 200]:
+            df[f'sma_{period}'] = df['close'].rolling(period).mean()
+            df[f'ema_{period}'] = df['close'].ewm(span=period).mean()
+        
+        # RSI
+        for period in [14, 21]:
+            delta = df['close'].diff()
+            gain = delta.where(delta > 0, 0).rolling(period).mean()
+            loss = -delta.where(delta < 0, 0).rolling(period).mean()
+            rs = gain / loss
+            df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        ema12 = df['close'].ewm(span=12).mean()
+        ema26 = df['close'].ewm(span=26).mean()
+        df['macd'] = ema12 - ema26
+        df['macd_signal'] = df['macd'].ewm(span=9).mean()
+        df['macd_hist'] = df['macd'] - df['macd_signal']
+        
+        # Bollinger Bands
+        sma20 = df['close'].rolling(20).mean()
+        std20 = df['close'].rolling(20).std()
+        df['bb_upper'] = sma20 + (std20 * 2)
+        df['bb_lower'] = sma20 - (std20 * 2)
+        df['bb_width'] = df['bb_upper'] - df['bb_lower']
+        
+        # ATR
+        tr = pd.concat([
+            df['high'] - df['low'],
+            (df['high'] - df['close'].shift()).abs(),
+            (df['low'] - df['close'].shift()).abs()
+        ], axis=1).max(axis=1)
+        df['atr_14'] = tr.rolling(14).mean()
+        
+        # OBV
+        df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        
+        # 价格变化
+        df['price_change'] = df['close'].pct_change() * 100
+        df['volume_change'] = df['volume'].pct_change() * 100
+        
+        self.df = df.fillna(0)
+        return self.df
+    
+    def get_features(self):
+        exclude = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        return [col for col in self.df.columns if col not in exclude]
+
+print('✓ 特征工程定义完成')
+
+# STEP 5: 数据预处理
+print('\n[STEP 5] 定义数据预处理...')
+
+class DataPreprocessor:
+    def __init__(self, df, lookback=60):
+        self.df = df.copy()
+        self.lookback = lookback
+        self.scaler = MinMaxScaler((0, 1))
+        self.pca = None
+    
+    def prepare(self, feature_cols, n_components=30):
+        self.df = self.df.dropna()
+        feature_data = self.df[feature_cols].copy()
+        
+        if len(feature_cols) > n_components:
+            self.pca = PCA(n_components=n_components)
+            feature_data = self.pca.fit_transform(feature_data)
+            feature_cols = [f'pc_{i}' for i in range(n_components)]
+            feature_data = pd.DataFrame(feature_data, columns=feature_cols, index=self.df.index)
+        
+        feature_data = self.scaler.fit_transform(feature_data)
+        self.features = feature_data
+        self.feature_cols = feature_cols
+        
+        return feature_data, feature_cols
+    
+    def create_sequences(self):
+        X, y = [], []
+        data = self.features
+        
+        for i in range(self.lookback, len(data)):
+            X.append(data[i - self.lookback:i])
+            y.append(data[i, 0])
+        
+        return np.array(X), np.array(y).reshape(-1, 1)
+    
+    def split_data(self, X, y, train_ratio=0.7):
+        n = len(X)
+        train_idx = int(n * train_ratio)
+        val_idx = int(n * (train_ratio + 0.15))
+        
+        return {
+            'X_train': X[:train_idx], 'y_train': y[:train_idx],
+            'X_val': X[train_idx:val_idx], 'y_val': y[train_idx:val_idx],
+            'X_test': X[val_idx:], 'y_test': y[val_idx:]
+        }
+
+print('✓ 数据预处理定义完成')
+
+# STEP 6: LSTM 模型
+print('\n[STEP 6] 定义 LSTM 模型...')
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=30, lstm_units=[96, 64], dense_units=32, dropout=0.2):
+        super().__init__()
+        
+        self.lstm1 = nn.LSTM(input_size, lstm_units[0], batch_first=True, dropout=dropout, bidirectional=True)
+        self.lstm2 = nn.LSTM(lstm_units[0] * 2, lstm_units[1], batch_first=True, dropout=dropout, bidirectional=True)
+        
+        lstm_output = lstm_units[1] * 2
+        self.dense1 = nn.Linear(lstm_output, dense_units)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(0.1)
+        self.dense2 = nn.Linear(dense_units, 1)
+    
+    def forward(self, x):
+        lstm1_out, _ = self.lstm1(x)
+        lstm2_out, _ = self.lstm2(lstm1_out)
+        last_out = lstm2_out[:, -1, :]
+        
+        dense_out = self.dense1(last_out)
+        dense_out = self.relu(dense_out)
+        dense_out = self.dropout(dense_out)
+        output = self.dense2(dense_out)
+        
+        return output
+    
+    def count_params(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+class Trainer:
+    def __init__(self, model, device='cuda'):
+        self.model = model.to(device)
+        self.device = device
+    
+    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001):
+        X_train_t = torch.FloatTensor(X_train).to(self.device)
+        y_train_t = torch.FloatTensor(y_train).to(self.device)
+        X_val_t = torch.FloatTensor(X_val).to(self.device)
+        y_val_t = torch.FloatTensor(y_val).to(self.device)
+        
+        train_loader = DataLoader(
+            TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False
+        )
+        val_loader = DataLoader(
+            TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False
+        )
+        
+        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        criterion = nn.MSELoss()
+        
+        best_val_loss = float('inf')
+        patience_counter = 0
+        patience = 15
+        
+        for epoch in range(epochs):
+            self.model.train()
+            train_loss = 0
+            for X_batch, y_batch in train_loader:
+                optimizer.zero_grad()
+                output = self.model(X_batch)
+                loss = criterion(output, y_batch)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                optimizer.step()
+                train_loss += loss.item()
+            train_loss /= len(train_loader)
+            
+            self.model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for X_batch, y_batch in val_loader:
+                    output = self.model(X_batch)
+                    loss = criterion(output, y_batch)
+                    val_loss += loss.item()
+            val_loss /= len(val_loader)
+            
+            if (epoch + 1) % 10 == 0:
+                print(f'    Epoch {epoch+1}/{epochs}: Train={train_loss:.6f}, Val={val_loss:.6f}')
+            
+            if val_loss < best_val_loss - 0.0001:
+                best_val_loss = val_loss
+                patience_counter = 0
+                best_weights = self.model.state_dict().copy()
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f'    早停: 第 {epoch+1} epoch')
+                    self.model.load_state_dict(best_weights)
+                    break
+        
+        return {'best_val_loss': float(best_val_loss), 'epochs': epoch+1}
+
+print('✓ 模型定义完成')
+
+# STEP 7: 测试数据生成器
+print('\n[STEP 7] 定义测试数据生成器...')
+
+def create_dummy_data(symbol, timeframe, num_candles=1000):
+    """创建测试数据"""
+    dates = pd.date_range(end=pd.Timestamp.now(), periods=num_candles, freq=timeframe)
+    close = np.random.randn(num_candles).cumsum() + 100
+    high = close + np.random.uniform(0.1, 2, num_candles)
+    low = close - np.random.uniform(0.1, 2, num_candles)
+    volume = np.random.uniform(1000, 100000, num_candles)
+    open_price = close.shift(1).fillna(close.iloc[0])
+    
+    df = pd.DataFrame({
+        'timestamp': dates,
+        'open': open_price,
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': volume
+    })
+    
+    return df
+
+print('✓ 测试数据生成器定义完成')
+
+# STEP 8: 检查 GPU
+print('\n[STEP 8] 检查 GPU...')
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f'✓ 使用设备: {device}')
+if device == 'cuda':
+    print(f'  GPU: {torch.cuda.get_device_name(0)}')
+    print(f'  内存: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+
+# STEP 9: 下载数据
+print('\n[STEP 9] 下载数据...')
+all_data = {}
+
+if CONFIG['use_dummy_data']:
+    print('  使用测试数据模式')
+    for coin in CONFIG['coins']:
+        coin_data = {}
+        for timeframe in CONFIG['timeframes']:
+            df = create_dummy_data(coin, timeframe, 1000)
+            coin_data[timeframe] = df
+        all_data[coin] = coin_data
+else:
+    print('  从 Binance US API 下载')
+    collector = BinanceDataCollector()
+    
+    for coin in CONFIG['coins']:
+        coin_data = {}
+        for timeframe in CONFIG['timeframes']:
+            try:
+                df = collector.get_klines(coin, timeframe, limit=3000)
+                if BinanceDataCollector.validate(df):
+                    coin_data[timeframe] = df
+                else:
+                    print(f'    ✗ {coin} {timeframe} 验证失败')
+            except Exception as e:
+                print(f'    ✗ {coin} {timeframe} 错误: {str(e)[:100]}')
+        
+        if coin_data:
+            all_data[coin] = coin_data
+
+print(f'✓ 下载完成: {sum([len(v) for v in all_data.values()])} 个数据集')
+
+# STEP 10: 训练
+print('\n[STEP 10] 训练模型...')
+results = {}
+
+for coin in all_data:
+    for timeframe in all_data[coin]:
+        print(f'\n  {coin} {timeframe}')
+        print('  ' + '-'*40)
+        
+        try:
+            df = all_data[coin][timeframe]
+            
+            fe = FeatureEngineer(df)
+            df_features = fe.calculate_all()
+            feature_cols = fe.get_features()
+            
+            prep = DataPreprocessor(df_features, lookback=CONFIG['lookback'])
+            features, feature_cols = prep.prepare(feature_cols, CONFIG['n_features'])
+            X, y = prep.create_sequences()
+            data = prep.split_data(X, y)
+            
+            model = LSTMModel(input_size=features.shape[-1])
+            print(f'  参数数量: {model.count_params():,}')
+            
+            trainer = Trainer(model, device=device)
+            history = trainer.train(
+                data['X_train'], data['y_train'],
+                data['X_val'], data['y_val'],
+                epochs=CONFIG['epochs'],
+                batch_size=CONFIG['batch_size'],
+                lr=CONFIG['learning_rate']
+            )
+            
+            results[f'{coin}_{timeframe}'] = history
+            print(f'  ✓ 最佳损失: {history["best_val_loss"]:.6f}')
+            
+        except Exception as e:
+            print(f'  ✗ 错误: {e}')
+
+# STEP 11: 总结
+print('\n' + '='*70)
+print('[STEP 11] 训练总结')
+print('='*70)
+print(f'\n✓ 训练完成: {len(results)} 个模型')
+for key, val in results.items():
+    print(f'  {key}: 损失={val["best_val_loss"]:.6f}, 轮数={val["epochs"]}')
+
+print('\n✓ 全部流程完成！')
+print('='*70)
