@@ -1,0 +1,136 @@
+{
+  "coins": [
+    {
+      "symbol": "BTCUSDT",
+      "name": "Bitcoin",
+      "category": "layer1",
+      "priority": "critical"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "name": "Ethereum",
+      "category": "layer1",
+      "priority": "critical"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "name": "Solana",
+      "category": "layer1",
+      "priority": "high"
+    },
+    {
+      "symbol": "BNBUSDT",
+      "name": "Binance Coin",
+      "category": "layer1",
+      "priority": "high"
+    },
+    {
+      "symbol": "XRPUSDT",
+      "name": "XRP",
+      "category": "payment",
+      "priority": "high"
+    },
+    {
+      "symbol": "ADAUSDT",
+      "name": "Cardano",
+      "category": "layer1",
+      "priority": "high"
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "name": "Dogecoin",
+      "category": "meme",
+      "priority": "medium"
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "name": "Avalanche",
+      "category": "layer1",
+      "priority": "high"
+    },
+    {
+      "symbol": "MATICUSDT",
+      "name": "Polygon",
+      "category": "scaling",
+      "priority": "high"
+    },
+    {
+      "symbol": "OPUSDT",
+      "name": "Optimism",
+      "category": "scaling",
+      "priority": "high"
+    },
+    {
+      "symbol": "ARBUSDT",
+      "name": "Arbitrum",
+      "category": "scaling",
+      "priority": "high"
+    },
+    {
+      "symbol": "FTMUSDT",
+      "name": "Fantom",
+      "category": "layer1",
+      "priority": "medium"
+    },
+    {
+      "symbol": "LINKUSDT",
+      "name": "Chainlink",
+      "category": "oracle",
+      "priority": "high"
+    },
+    {
+      "symbol": "UNIUSDT",
+      "name": "Uniswap",
+      "category": "defi",
+      "priority": "high"
+    },
+    {
+      "symbol": "LTCUSDT",
+      "name": "Litecoin",
+      "category": "payment",
+      "priority": "medium"
+    },
+    {
+      "symbol": "BCHUSDT",
+      "name": "Bitcoin Cash",
+      "category": "payment",
+      "priority": "medium"
+    },
+    {
+      "symbol": "ETCUSDT",
+      "name": "Ethereum Classic",
+      "category": "layer1",
+      "priority": "low"
+    },
+    {
+      "symbol": "NEOUSDT",
+      "name": "NEO",
+      "category": "layer1",
+      "priority": "low"
+    },
+    {
+      "symbol": "ATOMUSDT",
+      "name": "Cosmos",
+      "category": "interop",
+      "priority": "medium"
+    },
+    {
+      "symbol": "APTUSDT",
+      "name": "Aptos",
+      "category": "layer1",
+      "priority": "medium"
+    },
+    {
+      "symbol": "SUIUSDT",
+      "name": "Sui",
+      "category": "layer1",
+      "priority": "medium"
+    }
+  ],
+  "meta": {
+    "total_coins": 21,
+    "min_candles": 3000,
+    "timeframes": ["15m", "1h"],
+    "data_source": "binance"
+  }
+}
