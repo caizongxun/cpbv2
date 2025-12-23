@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CPB v2: Bulk Upload All Models at Once
-一次上傳整個 all_models 資料夾（全部16個幣種）
+一次上傳整個 all_models 資料夾（全部幣種）
 """
 
 print("\n" + "="*90)
@@ -89,8 +89,6 @@ try:
             "*.egg-info",
             ".DS_Store",
         ],
-        multi_commit=True,  # 允許多個提交（大檔案用）
-        multi_commit_pr=False,
     )
     
     print(f"\n[SUCCESS] All models uploaded successfully!")
@@ -128,12 +126,14 @@ except KeyboardInterrupt:
 except Exception as e:
     print(f"\n[ERROR] Upload failed")
     print(f"\nError details:")
-    print(f"  {str(e)[:200]}")
+    print(f"  {str(e)[:300]}")
     print(f"\n[TIP] Possible solutions:")
     print(f"  1. Check internet connection")
     print(f"  2. Verify HF_TOKEN is valid")
     print(f"  3. Check disk space")
     print(f"  4. Try again later")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
 print("\n" + "="*90)
