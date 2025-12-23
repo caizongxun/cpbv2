@@ -6,7 +6,7 @@ CPB v2: Bulk Upload All Models at Once
 """
 
 print("\n" + "="*90)
-print("BULK UPLOAD ALL MODELS (All 16 Coins)")
+print("BULK UPLOAD ALL MODELS (All 16+ Coins)")
 print("="*90)
 
 import os
@@ -35,18 +35,20 @@ print(f"URL: https://huggingface.co/{REPO_ID}")
 print("\n[STEP 1] Finding all_models folder")
 print("="*90)
 
-# 尋找 all_models 資料夾
+# 優先使用 all_models，如果沒有再用 hf_models
 model_dir = Path('./all_models')
 
 if not model_dir.exists():
-    print(f"[ERROR] 'all_models' folder not found at {model_dir.absolute()}")
-    print(f"\nAvailable directories:")
-    for d in Path('.').iterdir():
-        if d.is_dir() and 'model' in d.name.lower():
-            print(f"  - {d.name}")
-    sys.exit(1)
+    model_dir = Path('./hf_models')
+    if not model_dir.exists():
+        print(f"[ERROR] Neither 'all_models' nor 'hf_models' folder found")
+        print(f"\nSearching in current directory:")
+        for d in Path('.').iterdir():
+            if d.is_dir() and not d.name.startswith('.'):
+                print(f"  - {d.name}")
+        sys.exit(1)
 
-print(f"[OK] Found: {model_dir}")
+print(f"[OK] Found: {model_dir.name}")
 print(f"[OK] Absolute path: {model_dir.absolute()}")
 
 # 統計資料夾
@@ -79,7 +81,7 @@ try:
         repo_type="model",
         folder_path=str(model_dir),
         token=HF_TOKEN,
-        commit_message="Bulk upload all 16 CPB v1 coin models",
+        commit_message=f"Bulk upload all {len(folders)} CPB v1 coin models",
         ignore_patterns=[
             "*.pyc",
             "__pycache__",
