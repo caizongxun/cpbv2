@@ -5,7 +5,7 @@ One-file execution for entire workflow:
 1. Load historical K-line data (future: 3000 candles)
 2. Train V2 models (20 pairs, output: [price, volatility])
 3. Visualization (training history, predictions, volatility)
-4. Upload to Hugging Face (MODEL_V2/ folder)
+4. Upload to GitHub (caizongxun/cpbv2 repo - MODEL_V2 folder)
 
 Usage:
     import urllib.request
@@ -398,93 +398,93 @@ with open(readme_path, 'w') as f:
 print(f"   README: {readme_path}")
 print(f"[OK] Metadata created")
 
-# ==================== Phase 8: Upload to Hugging Face ====================
-print("\n[Phase 8] Upload to Hugging Face")
+# ==================== Phase 8: Upload to GitHub ====================
+print("\n[Phase 8] Upload to GitHub (caizongxun/cpbv2)")
 print("-" * 80)
 
-def upload_to_huggingface(hf_token, hf_username):
+def upload_to_github(github_token):
     """
-    Upload entire MODEL_V2 folder to HF
+    Upload entire MODEL_V2 folder to GitHub (caizongxun/cpbv2)
     Key: Upload as folder, not individual files
-    HF structure: {username}/cpb-models/MODEL_V2/
+    GitHub structure: caizongxun/cpbv2/MODEL_V2/
     """
     try:
-        from huggingface_hub import HfApi, HfFolder
+        from github import Github
         
-        HfFolder.save_token(hf_token)
-        api = HfApi()
+        # Initialize GitHub API
+        g = Github(github_token)
+        repo = g.get_user().get_repo('cpbv2')
         
-        # Verify token
-        try:
-            user_info = api.whoami(token=hf_token)
-            print(f"   ✓ Logged in as: {user_info['name']}")
-        except:
-            print(f"   ✗ Invalid token")
-            return False
-        
-        repo_id = f"{hf_username}/cpb-models"
-        
-        print(f"   Target repo: {repo_id}")
-        
-        # Create repo if not exists
-        try:
-            api.repo_info(repo_id=repo_id, repo_type="model", token=hf_token)
-            print(f"   ✓ Repository exists")
-        except:
-            print(f"   Creating repository...")
-            api.create_repo(
-                repo_id=repo_id,
-                repo_type="model",
-                private=False,
-                token=hf_token
-            )
-            print(f"   ✓ Repository created")
+        print(f"   Connected to: {repo.full_name}")
         
         # Upload entire MODEL_V2 folder
         print(f"   Uploading ALL_MODELS/MODEL_V2/ folder...")
-        api.upload_folder(
-            folder_path='ALL_MODELS/MODEL_V2',
-            repo_id=repo_id,
-            repo_type="model",
-            path_in_repo="MODEL_V2",
-            token=hf_token,
-            commit_message="Upload V2 models (20 pairs, [price, volatility] output)"
-        )
         
-        print(f"   ✓ Folder uploaded")
-        print(f"   Repository: https://huggingface.co/{repo_id}")
-        print(f"   Model path: {repo_id}/MODEL_V2/")
+        import base64
+        
+        upload_count = 0
+        for filename in os.listdir('ALL_MODELS/MODEL_V2'):
+            if filename.endswith(('.h5', '.json', '.md')):
+                file_path = os.path.join('ALL_MODELS/MODEL_V2', filename)
+                
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_content = f.read()
+                    
+                    # Check if file exists
+                    try:
+                        contents = repo.get_contents(f'ALL_MODELS/MODEL_V2/{filename}')
+                        # Update existing file
+                        repo.update_file(
+                            f'ALL_MODELS/MODEL_V2/{filename}',
+                            f'Update {filename}',
+                            file_content,
+                            contents.sha
+                        )
+                        print(f"   ✓ {filename} (updated)")
+                    except:
+                        # Create new file
+                        repo.create_file(
+                            f'ALL_MODELS/MODEL_V2/{filename}',
+                            f'Add {filename}',
+                            file_content
+                        )
+                        print(f"   ✓ {filename} (created)")
+                    
+                    upload_count += 1
+                    
+                except Exception as e:
+                    print(f"   ✗ {filename}: {e}")
+        
+        print(f"\n   [OK] Successfully uploaded {upload_count} files to GitHub")
+        print(f"   Repository: https://github.com/caizongxun/cpbv2")
+        print(f"   Model path: caizongxun/cpbv2/ALL_MODELS/MODEL_V2/")
         
         return True
         
     except ImportError:
-        print(f"   [ERROR] huggingface_hub not installed")
-        print(f"   Install: pip install huggingface_hub")
+        print(f"   [ERROR] PyGithub not installed")
+        print(f"   Install: pip install PyGithub")
         return False
     except Exception as e:
         print(f"   [ERROR] Upload failed: {e}")
         return False
 
-print("   [Option] Upload to Hugging Face")
+print("   [Option] Upload to GitHub")
 
 try:
     from google.colab import output
     # In Colab, ask for input
-    hf_token = input("   Enter HF Token (or press Enter to skip): ").strip()
-    if hf_token:
-        hf_username = input("   Enter HF Username: ").strip()
-        if hf_username:
-            upload_success = upload_to_huggingface(hf_token, hf_username)
-        else:
-            print("   [SKIP] Username not provided")
-            upload_success = False
+    github_token = input("   Enter GitHub Token (or press Enter to skip): ").strip()
+    if github_token:
+        upload_success = upload_to_github(github_token)
     else:
         print("   [SKIP] Token not provided")
         upload_success = False
 except:
     # Not in Colab
-    print("   [INFO] Set HF_TOKEN and HF_USERNAME environment variables to auto-upload")
-    print("   Or run: huggingface-cli login")
+    print("   [INFO] Set GITHUB_TOKEN environment variable to auto-upload")
+    print("   Or manually push to: git push origin main")
     upload_success = False
 
 # ==================== Summary ====================
@@ -498,9 +498,9 @@ print(f"  ✓ Output Format: {CONFIG['output']}")
 print(f"  ✓ Location: ALL_MODELS/MODEL_V2/")
 print(f"  ✓ Visualizations: visualizations/")
 if upload_success:
-    print(f"  ✓ Uploaded to HF: cpb-models/MODEL_V2/")
+    print(f"  ✓ Uploaded to GitHub: caizongxun/cpbv2/ALL_MODELS/MODEL_V2/")
 else:
-    print(f"  ✗ Not uploaded to HF (run upload separately)")
+    print(f"  ✗ Not uploaded to GitHub (run upload separately)")
 
 print("\n[FILES CREATED]")
 print(f"  - models/v2_model_*.h5 (20 files)")
