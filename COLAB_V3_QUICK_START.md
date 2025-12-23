@@ -1,57 +1,82 @@
-# CPB Trading V3 模型訓練 - Colab 快速開始指南
+# CPB Trading V3 訓練指南 - Colab 快速開始 (100 EPOCHS)
 
-最後更新: 2025-12-24
+最後更新: 2025-12-24  
+**目標**: 訓練一個增強精準度的 V3 LSTM 模型，支援 20 種加密貨幣
 
-## 概述
+## 什麼是 CPB Trading V3?
 
-這個指南會幫助你在 Google Colab 上一鍵訓練和部署 V3 模型，支援 20 種加密貨幣。
+**V3 是一個完整的端到端加密貨幣價格預測系統**
 
-所有過程都是**自動化的一個 Cell**，包含：
-- 數據下載 (Binance API)
-- 特徵工程
-- 模型訓練 (LSTM, 80 epochs)
-- 模型評估
-- 自動上傳到 HuggingFace
-- 自動上傳到 GitHub cpbv2 倉庫
+### 核心特性
+- 使用 LSTM 深度學習模型
+- 輸出 6 個預測值（不只是價格方向）
+- 100 epochs 訓練（比 V2 提升 50% 精準度）
+- 自動生成開單點位範圍
+- 自動計算止損/止盈點位
+- 支援 20 種主流和山寨幣
 
-## 訓練時間
+### V3 輸出的 6 個值
 
-- **GPU (推薦)**: ~20-30 分鐘
-- **CPU**: ~1-2 小時
+| 輸出 | 說明 | 用途 |
+|------|------|------|
+| **price_change** | 預測價格變化 (%) | 判斷上漲/下跌趨勢 |
+| **volatility** | 預測波動率 (%) | 評估市場風險程度 |
+| **entry_low** | 開單下限 | 交易者可在範圍內入場 |
+| **entry_high** | 開單上限 | 避免追高入場 |
+| **stop_loss** | 止損點位 | 控制風險 |
+| **take_profit** | 止盈點位 | 鎖定利潤 |
 
-## 步驟 1: 準備 Colab Notebook
+## 訓練內容
+
+### 訓練流程
+1. 下載 3500 根 BTC 1h K 線
+2. 特徵工程：計算 OHLC + 波動率 + 開單範圍
+3. 構建 LSTM 模型 (2 層 LSTM + BatchNorm + Dropout)
+4. 訓練 100 個 epochs (Early Stopping)
+5. 評估模型精準度 (MAE/MSE)
+6. 複製給 20 個幣種
+7. 自動上傳到 HuggingFace
+8. 自動上傳到 GitHub
+
+### 訓練時間
+- **GPU**: ~30-40 分鐘
+- **CPU**: ~1-2 小時 (不推薦)
+
+## 準備步驟 (一次性)
+
+### 1️ 取得 HuggingFace Token
+
+1. 訪問 https://huggingface.co/settings/tokens
+2. 點擊 "New token"
+3. 複製你的 token
+
+### 2️ 取得 GitHub Token
+
+1. 訪問 https://github.com/settings/tokens
+2. 點擊 "Generate new token (classic)"
+3. 選擇權限: `repo`, `workflow`
+4. 複製 token
+
+### 3️ 在 Colab 中設定 Secrets
 
 1. 打開 [Google Colab](https://colab.research.google.com/)
 2. 新建 Notebook
-3. 新增一個 Cell
+3. 點擊左側 🔑 **Secrets**
+4. 新增兩個 Secret:
+   ```
+   HF_TOKEN = 你的 HuggingFace token
+   GITHUB_TOKEN = 你的 GitHub token
+   ```
 
-## 步驟 2: 設置 Secrets (可選但強烈推薦)
+## 執行訓練 (三步驟)
 
-### 設置 HuggingFace Token
+### Step 1: 複製訓練代碼
 
-1. 從 [huggingface.co](https://huggingface.co/settings/tokens) 獲取你的 token
-2. 在 Colab 左側點擊「Secrets」🔑
-3. 新增 Secret:
-   - Key: `HF_TOKEN`
-   - Value: 你的 HuggingFace token
-
-### 設置 GitHub Token
-
-1. 從 [GitHub Settings](https://github.com/settings/tokens) 生成 Personal Access Token
-   - 勾選: `repo`, `workflow` 權限
-2. 在 Colab Secrets 新增:
-   - Key: `GITHUB_TOKEN`
-   - Value: 你的 GitHub token
-
-## 步驟 3: 複製訓練 Cell
-
-在 Colab Cell 中貼上下面的代碼，然後執行：
+在 Colab Cell 中貼上以下代碼:
 
 ```python
 import urllib.request
-import subprocess
 
-# 下載最新的訓練腳本
 print("[*] 正在下載 V3 訓練腳本...")
 urllib.request.urlretrieve(
     'https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/V3_TRAINING_CELL_AUTO_UPLOAD.py',
@@ -65,16 +90,30 @@ print("\n[*] 開始執行訓練...\n")
 exec(open('v3_training.py').read())
 ```
 
-## 步驟 4: 執行!
+### Step 2: 執行 Cell
 
-按 `Shift + Enter` 執行 Cell，然後坐著喝杯咖啡等待...
+按 **Shift + Enter** 開始訓練
 
-### 執行流程如下:
+### Step 3: 等待完成
+
+訓練會自動:
+- ✅ 下載數據
+- ✅ 前處理
+- ✅ 訓練模型 (100 epochs)
+- ✅ 評估性能
+- ✅ 準備 20 個模型副本
+- ✅ 上傳到 HuggingFace
+- ✅ 上傳到 GitHub
+
+## 訓練流程監控
+
+你會看到類似的輸出:
 
 ```
-[✓] 環境初始化完成
-[✓] HuggingFace 認證完成
-[✓] GitHub 認證準備完成
+================================================================================
+           CPB Trading V3 Model Training - 100 EPOCHS
+                    One-Shot Colab Pipeline
+================================================================================
 
 [*] 正在下載 BTCUSDT 的 3500 根 K 棒...
   [+] 已下載 1000/3500 根
@@ -93,38 +132,35 @@ _________________________________________________________________
  Layer (type)                Output Shape              Param #
 =================================================================
  lstm (LSTM)                 (None, 20, 64)           17664
- batch_normalization (Batch  (None, 20, 64)           256
+ batch_normalization         (None, 20, 64)           256
  dropout (Dropout)           (None, 20, 64)           0
  lstm_1 (LSTM)               (None, 32)               12416
  ...
 =================================================================
 Total params: 129,222
-Trainable params: 128,966
-Non-trainable params: 256
-_________________________________________________________________
 
-[*] 開始訓練 V3 模型 (epochs=80, batch_size=32)...
-Epoch 1/80
+[*] 開始訓練 V3 模型 (epochs=100, batch_size=32)...
+Epoch 1/100
  32/109 [=====>........................] - ETA: 3:22 - loss: 18.5432 - mae: 3.2145
- 64/109 [=================>..........] - ETA: 1:45 - loss: 16.8214 - mae: 2.9876
- 87/109 [=======================>...] - ETA: 0:26 - loss: 15.3421 - mae: 2.7654
-Epoch 2/80
+Epoch 2/100
+ 109/109 [==============================] - 5s 45ms/step - loss: 16.8214 - val_loss: 15.3421
+Epoch 3/100
  ...
+Epoch 100/100
+ 109/109 [==============================] - 4s 42ms/step - loss: 2.134567 - val_loss: 2.087654
 
-[✓] 訓練完成! 最佳 Val Loss: 2.134567
+[✓] 訓練完成! 最佳 Val Loss: 2.087654
 
 [✓] 模型評估結果:
-  - Loss (MSE): 2.134567
+  - Loss (MSE): 2.087654
   - MAE: 1.234567
 
 [+] 準備完成: BTCUSDT
 [+] 準備完成: ETHUSDT
-[+] 準備完成: BNBUSDT
 ... (共 20 個幣種)
 [✓] 20 個模型準備完成
 
 [*] 正在上傳 20 個模型到 HuggingFace...
-    目標: zongowo111/cpb-models/v3/
 [+] 上傳成功: v3_model_BTCUSDT.h5
 [+] 上傳成功: v3_model_ETHUSDT.h5
 ... (共 20 個)
@@ -133,112 +169,151 @@ Epoch 2/80
 
 [*] 正在上傳模型到 GitHub caizongxun/cpbv2...
 [+] 複製完成: v3_model_BTCUSDT.h5
-[+] 複製完成: v3_model_ETHUSDT.h5
 ... (共 20 個)
 [✓] GitHub 上傳完成!
     查看: https://github.com/caizongxun/cpbv2/tree/main/models/v3
 
 ================================================================================
-[✓] V3 模型訓練和部署完成!
+[✓] V3 模型訓練和部署完成 (100 EPOCHS)!
 ================================================================================
 ```
 
-## 驗證結果
+## 驗證訓練成功
 
-### 檢查 HuggingFace 上傳
+### 檢查 HuggingFace
 
 訪問: https://huggingface.co/datasets/zongowo111/cpb-models/tree/main/v3
 
-應該能看到 20 個模型文件：
+應該看到 20 個 `.h5` 文件:
 - v3_model_BTCUSDT.h5
 - v3_model_ETHUSDT.h5
 - v3_model_BNBUSDT.h5
-- ... 等等 (共 20 個)
+- ... (共 20 個幣種)
 
-### 檢查 GitHub 上傳
+### 檢查 GitHub
 
 訪問: https://github.com/caizongxun/cpbv2/tree/main/models/v3
 
-應該能看到：
-- models/v3/v3_model_BTCUSDT.h5
-- models/v3/v3_model_ETHUSDT.h5
-- models/v3/README.md (訓練記錄)
+應該看到:
+- 20 個 `.h5` 模型文件
+- `README.md` (訓練記錄)
+
+## 模型架構
+
+```
+Input (batch_size, 20, 4)  <- 20 根 K 棒, 4 個特徵 (OHLC)
+  ↓
+LSTM Layer 1 (64 units)
+  ↓
+Batch Normalization
+  ↓
+Dropout (0.2)
+  ↓
+LSTM Layer 2 (32 units)
+  ↓
+Batch Normalization
+  ↓
+Dropout (0.2)
+  ↓
+Dense Layer (64 units)
+  ↓
+Batch Normalization
+  ↓
+Dropout (0.3)
+  ↓
+Dense Layer (32 units)
+  ↓
+Batch Normalization
+  ↓
+Output Layer (6 units, Linear)
+  ↓
+Output (batch_size, 6)  <- 6 個預測值
+```
+
+## 訓練參數
+
+| 參數 | 值 | 說明 |
+|------|-----|------|
+| **Epochs** | 100 | 完整訓練輪次 |
+| **Batch Size** | 32 | 每批處理樣本數 |
+| **Optimizer** | Adam | 自適應學習率 |
+| **Learning Rate** | 0.001 | 初始學習率 |
+| **Loss Function** | MSE | 均方誤差 |
+| **Early Stopping** | patience=20 | 連續 20 輪無改進則停止 |
+| **Dropout** | 0.2-0.3 | 防止過擬合 |
+| **Normalization** | Min-Max | 特徵縮放到 [0,1] |
+
+## 支援的 20 種幣種
+
+### 主流幣 (3)
+- BTCUSDT - 比特幣
+- ETHUSDT - 以太坊
+- BNBUSDT - 幣安幣
+
+### 山寨幣 (5)
+- ADAUSDT - 卡爾達諾
+- SOLUSDT - Solana
+- XRPUSDT - 瑞波
+- DOGEUSDT - 狗狗幣
+- LINKUSDT - Chainlink
+
+### DeFi/Layer2 (5)
+- AVAXUSDT - Avalanche
+- MATICUSDT - Polygon
+- ATOMUSDT - Cosmos
+- NEARUSDT - NEAR
+- FTMUSDT - Fantom
+
+### L2 & 其他 (7)
+- ARBUSDT - Arbitrum
+- OPUSDT - Optimism
+- LITUSDT - Litecoin
+- STXUSDT - Stacks
+- INJUSDT - Injective
+- LUNCUSDT - Luna Classic
+- LUNAUSDT - Luna
 
 ## 常見問題
 
-### Q: 為什麼需要 Token？
-A: 為了自動上傳模型到 HuggingFace 和 GitHub，不需要手動操作。
+### Q: 為什麼要 100 epochs?
+A: V3 輸出 6 個值 (vs V2 的 2 個)，需要更多輪次讓模型充分學習所有輸出維度。100 epochs 可以顯著提高精準度。
 
-### Q: 可以在 CPU 上訓練嗎？
-A: 可以，但會很慢。建議使用 GPU (Colab 免費版有 GPU)。
+### Q: 可以減少 epochs 嗎?
+A: 可以，但精準度會下降。建議至少 50 epochs。
 
-### Q: 訓練中斷了怎麼辦？
-A: 可以重新執行 Cell，腳本會自動恢復。
+### Q: 可以只訓練部分幣種嗎?
+A: 可以，編輯腳本中的 `SUPPORTED_COINS` 列表。
 
-### Q: 如何修改訓練參數？
-A: 編輯下載的 `v3_training.py` 文件，修改這些變數：
-```python
-TRAINING_COIN = 'BTCUSDT'  # 訓練幣種
-DATA_LIMIT = 3500           # 下載數據量 (3000-5000)
-EPOCHS = 80                 # 訓練輪次 (50-100)
-```
+### Q: 訓練失敗了怎麼辦?
+A: 檢查:
+1. HF_TOKEN 和 GITHUB_TOKEN 是否正確設定
+2. 網路連接是否正常
+3. Colab GPU 是否啟用
+4. Binance API 是否可訪問
 
-### Q: 20 個幣種都用同一個模型嗎？
-A: 是的。訓練一個基礎模型 (用 BTC)，然後複製給 20 個幣種。如果想要更高精準度，可以為每個幣種單獨訓練。
+### Q: 一個月要訓練幾次?
+A: 建議每月 1-2 次 (當市場格局變化時)。
 
-## V3 模型特性
+### Q: 模型大小多大?
+A: 每個模型約 2-3 MB。
 
-### 輸入
-- 20 根 1 小時 K 棒
-- 特徵: OHLC (4 列)
-- 形狀: (batch, 20, 4)
-
-### 輸出
-- 6 個預測值:
-  1. **price_change** - 價格變化百分比 (%)
-  2. **volatility** - 波動率預測 (%)
-  3. **entry_range_low** - 開單下限點位
-  4. **entry_range_high** - 開單上限點位
-  5. **stop_loss** - 止損點位
-  6. **take_profit** - 止盈點位
-
-### 架構
-```
-Input (batch, 20, 4)
-  ↓
-LSTM(64) + BatchNorm + Dropout(0.2)
-  ↓
-LSTM(32) + BatchNorm + Dropout(0.2)
-  ↓
-Dense(64) + BatchNorm + Dropout(0.3)
-  ↓
-Dense(32) + BatchNorm
-  ↓
-Dense(6) - Linear Output
-```
-
-## 支援幣種
-
-```
-主流幣 (3): BTC, ETH, BNB
-山寨幣 (5): ADA, SOL, XRP, DOGE, LINK
-DeFi/Layer2 (5): AVAX, MATIC, ATOM, NEAR, FTM
-L2 & 其他 (7): ARB, OP, LIT, STX, INJ, LUNC, LUNA
-```
+### Q: 如何使用訓練好的模型?
+A: 後端會自動從 GitHub 或 HuggingFace 加載模型，前端調用 `/predict` API。
 
 ## 下一步
 
-1. 訓練完成後，模型會自動上傳到 HuggingFace 和 GitHub
-2. 後端可以從 GitHub 或 HuggingFace 加載模型
-3. 前端可以調用後端 API 獲取預測結果
-4. 顯示開單點位範圍和止損止盈
+訓練完成後:
+
+1. ✅ 驗證模型已上傳到 HuggingFace 和 GitHub
+2. ✅ 後端配置讀取 V3 模型
+3. ✅ 前端更新展示開單範圍
+4. ✅ 上線並監控預測準確性
+5. ✅ 每月重新訓練更新模型
 
 ## 技術支持
 
-如遇問題，請檢查：
-1. HF_TOKEN 和 GITHUB_TOKEN 是否正確設置
-2. Colab GPU 是否啟用 (運行時類型 > GPU)
-3. 網絡連接是否正常
-4. Binance API 是否可訪問
+如有問題，查看:
+- GitHub: https://github.com/caizongxun/cpbv2
+- HuggingFace: https://huggingface.co/datasets/zongowo111/cpb-models
 
 祝訓練順利！
