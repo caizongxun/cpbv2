@@ -2,13 +2,14 @@
 CPB Trading V3 Model Training - One-Shot Colab Cell with Auto Upload
 自動訓練、評估和上傳到 HuggingFace 和 GitHub
 
-執行時間: ~20-30 分鐘 (GPU)
+執行時間: ~30-40 分鐘 (GPU)
 支援幣種: 20 種
 輸出: 6 個預測值 (price_change, volatility, entry_low, entry_high, stop_loss, take_profit)
+Epochs: 100 (增強模型精準度)
 """
 
 # ============================================================================
-# Step 0: 安裝依賴和設定認證
+# Step 0: 安裝依賴和認證
 # ============================================================================
 !pip install -q tensorflow numpy pandas ccxt huggingface-hub scikit-learn gitpython
 
@@ -41,8 +42,8 @@ except:
 HfFolder.save_token(HF_TOKEN)
 
 print("[✓] 環境初始化完成")
-print(f"[✓] HuggingFace 認證完成")
-print(f"[✓] GitHub 認證準備完成")
+print("[✓] HuggingFace 認證完成")
+print("[✓] GitHub 認證準備完成")
 
 # ============================================================================
 # Step 1: 數據下載 (Binance API)
@@ -177,16 +178,16 @@ def build_v3_model(seq_len: int = 20, input_features: int = 4) -> tf.keras.Model
     return model
 
 # ============================================================================
-# Step 4: 訓練模型
+# Step 4: 訓練模型 (100 EPOCHS)
 # ============================================================================
 def train_v3_model(model: tf.keras.Model, X: np.ndarray, y: np.ndarray,
-                   epochs: int = 80, batch_size: int = 32) -> tf.keras.Model:
+                   epochs: int = 100, batch_size: int = 32) -> tf.keras.Model:
     """訓練 V3 模型"""
     print(f"\n[*] 開始訓練 V3 模型 (epochs={epochs}, batch_size={batch_size})...")
     
     early_stop = EarlyStopping(
         monitor='val_loss',
-        patience=15,
+        patience=20,
         restore_best_weights=True
     )
     
@@ -251,7 +252,7 @@ def prepare_models_for_upload(trained_model: tf.keras.Model,
 # ============================================================================
 def upload_to_huggingface(model_files: list, repo_id: str = "zongowo111/cpb-models",
                           version: str = "v3"):
-    """上傳到 HuggingFace Hub"""
+    """一次性上傳所有模型到 HuggingFace Hub"""
     api = HfApi()
     
     print(f"\n[*] 正在上傳 {len(model_files)} 個模型到 HuggingFace...")
@@ -276,19 +277,17 @@ def upload_to_huggingface(model_files: list, repo_id: str = "zongowo111/cpb-mode
     print(f"    查看: https://huggingface.co/datasets/zongowo111/cpb-models/tree/main/{version}")
 
 # ============================================================================
-# Step 8: 上傳到 GitHub cpbv2 倉庫
+# Step 8: 上傳到 GitHub cpbv2
 # ============================================================================
 def upload_to_github(model_files: list, repo_owner: str = "caizongxun",
                      repo_name: str = "cpbv2", version: str = "v3"):
-    """上傳模型到 GitHub cpbv2 倉庫"""
+    """上傳模型到 GitHub"""
     print(f"\n[*] 正在上傳模型到 GitHub {repo_owner}/{repo_name}...")
     
     try:
-        # 配置 Git
         subprocess.run(['git', 'config', '--global', 'user.email', 'ai@cpb.dev'], check=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'CPB AI System'], check=True)
         
-        # Clone 倉庫
         repo_path = f'/tmp/{repo_name}'
         if os.path.exists(repo_path):
             subprocess.run(['rm', '-rf', repo_path], check=True)
@@ -299,11 +298,9 @@ def upload_to_github(model_files: list, repo_owner: str = "caizongxun",
             repo_path
         ], check=True)
         
-        # 建立 models/v3 目錄
         models_dir = os.path.join(repo_path, 'models', version)
         Path(models_dir).mkdir(parents=True, exist_ok=True)
         
-        # 複製模型文件
         import shutil
         for model_file in model_files:
             filename = os.path.basename(model_file)
@@ -311,13 +308,12 @@ def upload_to_github(model_files: list, repo_owner: str = "caizongxun",
             shutil.copy(model_file, dest)
             print(f"[+] 複製完成: {filename}")
         
-        # 建立 README
         readme_path = os.path.join(models_dir, 'README.md')
         readme_content = f"""# CPB Trading V3 Models
 
 訓練日期: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-版本: V3
-模型類型: LSTM
+版本: V3 (100 Epochs)
+模型類型: LSTM + BatchNorm + Dropout
 輸出維度: 6 (price_change, volatility, entry_low, entry_high, stop_loss, take_profit)
 支援幣種: 20 種
 
@@ -331,11 +327,20 @@ def upload_to_github(model_files: list, repo_owner: str = "caizongxun",
 - Output: 6 values (linear activation)
 
 ## 訓練配置
-- Epoch: 80
+- Epochs: 100 (增強精準度)
 - Batch Size: 32
 - Optimizer: Adam (lr=0.001)
 - Loss: MSE
 - 正規化: Min-Max [0, 1]
+- Early Stopping: 監控 val_loss, patience=20
+
+## 輸出說明
+1. **price_change** - 預測的價格變化百分比 (%)
+2. **volatility** - 預測的波動率 (%)
+3. **entry_range_low** - 開單下限點位
+4. **entry_range_high** - 開單上限點位
+5. **stop_loss** - 止損點位
+6. **take_profit** - 止盈點位
 
 ## 使用方法
 ```python
@@ -344,19 +349,19 @@ import numpy as np
 
 model = tf.keras.models.load_model('v3_model_BTCUSDT.h5')
 prediction = model.predict(X)
-# Output: [price_change, volatility, entry_low, entry_high, stop_loss, take_profit]
+# Output shape: (batch_size, 6)
+# [price_change, volatility, entry_low, entry_high, stop_loss, take_profit]
 ```
 """
         
         with open(readme_path, 'w', encoding='utf-8') as f:
             f.write(readme_content)
         
-        # Git 操作
         os.chdir(repo_path)
         subprocess.run(['git', 'add', '.'], check=True)
         subprocess.run([
             'git', 'commit', '-m',
-            f'feat: Add V3 models trained on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+            f'feat: Add V3 models (100 epochs) trained on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
         ], check=True)
         subprocess.run(['git', 'push', 'origin', 'main'], check=True)
         
@@ -371,13 +376,14 @@ prediction = model.predict(X)
 # ============================================================================
 if __name__ == "__main__":
     print("\n" + "="*80)
-    print(" "*15 + "CPB Trading V3 Model Training - One-Shot Pipeline")
+    print(" "*10 + "CPB Trading V3 Model Training - 100 EPOCHS")
+    print(" "*15 + "One-Shot Colab Pipeline")
     print("="*80 + "\n")
     
-    # 配置參數
+    # 訓練配置
     TRAINING_COIN = 'BTCUSDT'
     DATA_LIMIT = 3500
-    EPOCHS = 80
+    EPOCHS = 100  # 改成 100 epochs
     
     # Step 1: 下載數據
     data = fetch_klines_for_training(TRAINING_COIN, limit=DATA_LIMIT)
@@ -388,7 +394,7 @@ if __name__ == "__main__":
     # Step 3: 構建模型
     model = build_v3_model(seq_len=20, input_features=4)
     
-    # Step 4: 訓練模型
+    # Step 4: 訓練模型 (100 epochs)
     model = train_v3_model(model, X, y, epochs=EPOCHS, batch_size=32)
     
     # Step 5: 評估模型
@@ -400,9 +406,9 @@ if __name__ == "__main__":
     # Step 7: 上傳到 HuggingFace
     upload_to_huggingface(model_files, repo_id="zongowo111/cpb-models", version="v3")
     
-    # Step 8: 上傳到 GitHub (自動)
+    # Step 8: 上傳到 GitHub (自動模式)
     upload_to_github(model_files, repo_owner="caizongxun", repo_name="cpbv2", version="v3")
     
     print("\n" + "="*80)
-    print("[✓] V3 模型訓練和部署完成!")
+    print("[✓] V3 模型訓練和部署完成 (100 EPOCHS)!")
     print("="*80 + "\n")
