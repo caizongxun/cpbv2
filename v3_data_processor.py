@@ -124,7 +124,7 @@ class V3DataProcessor:
         prediction_horizon: int = 1,
         target_col: str = 'Close'
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Create sequences for LSTM training"""
+        """Create sequences for LSTM training - returns 2D (samples, features)"""
         
         # Drop rows with NaN from indicator calculation
         df = df.dropna()
@@ -136,7 +136,7 @@ class V3DataProcessor:
         if len(feature_cols) == 0:
             raise ValueError("No features found after dropping standard columns")
         
-        X_data = df[feature_cols].values
+        X_data = df[feature_cols].values  # (total_samples, n_features)
         y_data = df[target_col].values
         
         # Normalize features
@@ -152,16 +152,19 @@ class V3DataProcessor:
         # Apply z-score normalization after min-max
         X_normalized = (X_normalized - self.mean) / self.std
         
-        # Create sequences
-        X, y = [], []
+        # Create sequences - 2D output: (sequence_samples, features)
+        # This is used with TimeSeriesSplit or just passed to LSTM directly
+        X_seq = []
+        y_seq = []
+        
         for i in range(len(X_normalized) - seq_length - prediction_horizon + 1):
-            X.append(X_normalized[i:i+seq_length])
-            # Use normalized close price for better training
-            y.append(y_normalized[i+seq_length+prediction_horizon-1])
+            # Take averaged features over sequence length as input
+            X_seq.append(X_normalized[i:i+seq_length].mean(axis=0))
+            y_seq.append(y_normalized[i+seq_length+prediction_horizon-1])
         
         self.feature_names = feature_cols
         
-        return np.array(X), np.array(y)
+        return np.array(X_seq), np.array(y_seq)
     
     def apply_pca(
         self,
@@ -169,13 +172,21 @@ class V3DataProcessor:
         n_components: int = 30,
         fit: bool = True
     ) -> np.ndarray:
-        """Apply PCA for dimensionality reduction"""
+        """Apply PCA for dimensionality reduction
+        Input: 2D array (samples, features)
+        Output: 2D array (samples, n_components)
+        """
+        
+        # Ensure 2D input
+        if X.ndim != 2:
+            raise ValueError(f"Expected 2D input, got {X.ndim}D")
         
         if fit:
-            self.pca = PCA(n_components=min(n_components, X.shape[1]))
+            n_comp = min(n_components, X.shape[1])
+            self.pca = PCA(n_components=n_comp)
             X_pca = self.pca.fit_transform(X)
             explained_var = self.pca.explained_variance_ratio_.sum()
-            logging.info(f"PCA: {n_components} components explain {explained_var*100:.2f}% variance")
+            logging.info(f"PCA: {X.shape[1]} -> {n_comp} components, explained variance: {explained_var*100:.2f}%")
         else:
             if self.pca is None:
                 raise ValueError("PCA not fitted. Call with fit=True first.")
@@ -204,6 +215,8 @@ class V3DataProcessor:
         
         X_test = X[train_size+val_size:]
         y_test = y[train_size+val_size:]
+        
+        logging.info(f"Data split: train {len(X_train)}, val {len(X_val)}, test {len(X_test)}")
         
         return {
             'X_train': X_train, 'y_train': y_train,
