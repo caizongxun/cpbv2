@@ -2,7 +2,7 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.1 (NumPy compatibility fix)
+# Version: 1.0.2 (Complete environment reset)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
@@ -12,16 +12,37 @@ import sys
 import subprocess
 
 # ============================================================================
-# STEP 0: Install Dependencies with Compatible Versions
+# STEP 0: Complete Environment Reset
 # ============================================================================
-print("[*] 安裝依賴...")
-print("[!] 修復 NumPy 版本衝突...")
+print("[*] 強制清理環境...")
+print("[!] 卸載所有與numpy/scipy/sklearn相關的包...\n")
 
-# Fix NumPy/TensorFlow compatibility
-os.system("pip install -q numpy==1.24.3")
-os.system("pip install -q tensorflow==2.14.0 pandas ccxt scikit-learn huggingface-hub --upgrade")
+# Force uninstall conflicting packages
+conflict_pkgs = [
+    "numpy", "scipy", "scikit-learn", "tensorflow", "keras"
+]
 
-print("[✓] 依賴安裝完成\n")
+for pkg in conflict_pkgs:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "uninstall", "-y", pkg],
+        capture_output=True,
+        stderr=subprocess.DEVNULL
+    )
+
+print("[✓] 清理完成\n")
+print("[*] 安裝幼容版本之間的依賴...\n")
+
+# Install compatible versions
+os.system(
+    f"{sys.executable} -m pip install -q "
+    "numpy==1.23.5 "
+    "scipy==1.11.4 "
+    "scikit-learn==1.3.2 "
+    "tensorflow==2.13.0 "
+    "pandas ccxt huggingface-hub --no-cache-dir"
+)
+
+print("\n[✓] 一转強清及重新安裝完成\n")
 
 # ============================================================================
 # STEP 1: Configuration
@@ -66,6 +87,8 @@ from huggingface_hub import HfApi, HfFolder
 import json
 from pathlib import Path
 import tempfile
+
+print("[✓] 所有包導入成功\n")
 
 # ============================================================================
 # PART 1: Download Data from Binance
