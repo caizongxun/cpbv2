@@ -2,14 +2,13 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.2 (Complete environment reset)
+# Version: 1.0.3 (Subprocess parameter fix)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
 
 import os
 import sys
-import subprocess
 
 # ============================================================================
 # STEP 0: Complete Environment Reset
@@ -23,14 +22,10 @@ conflict_pkgs = [
 ]
 
 for pkg in conflict_pkgs:
-    subprocess.run(
-        [sys.executable, "-m", "pip", "uninstall", "-y", pkg],
-        capture_output=True,
-        stderr=subprocess.DEVNULL
-    )
+    os.system(f"{sys.executable} -m pip uninstall -y {pkg} > /dev/null 2>&1")
 
 print("[✓] 清理完成\n")
-print("[*] 安裝幼容版本之間的依賴...\n")
+print("[*] 安裝相容版本之間的依賴...\n")
 
 # Install compatible versions
 os.system(
@@ -42,7 +37,7 @@ os.system(
     "pandas ccxt huggingface-hub --no-cache-dir"
 )
 
-print("\n[✓] 一转強清及重新安裝完成\n")
+print("\n[✓] 一轉強清及重新安裝完成\n")
 
 # ============================================================================
 # STEP 1: Configuration
