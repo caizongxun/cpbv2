@@ -40,7 +40,7 @@ from huggingface_hub import HfApi, HfFolder
 print("[✓] Dependencies installed\n")
 
 # ============================================================================
-# CONFIGURATION
+# CONFIGURATION - EDIT THESE
 # ============================================================================
 print("[*] Loading configuration...")
 
@@ -56,11 +56,28 @@ LEARNING_RATE = 5e-4
 HF_REPO = "zongowo111/cpb-models"
 HF_VERSION = "v4"
 
-SUPPORTED_COINS = [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'AVAXUSDT',
-    'ADAUSDT', 'DOGEUSDT', 'LINKUSDT', 'XRPUSDT', 'LTCUSDT',
-    'MATICUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT', 'ARBUSDT',
-    'OPUSDT', 'STXUSDT', 'INJUSDT', 'LUNCUSDT', 'LUNAUSDT'
+# === 20 COINS SUPPORT ===
+ALL_20_COINS = [
+    'BTCUSDT',    # Bitcoin
+    'ETHUSDT',    # Ethereum
+    'SOLUSDT',    # Solana
+    'BNBUSDT',    # Binance Coin
+    'AVAXUSDT',   # Avalanche
+    'ADAUSDT',    # Cardano
+    'DOGEUSDT',   # Dogecoin
+    'LINKUSDT',   # Chainlink
+    'XRPUSDT',    # XRP
+    'LTCUSDT',    # Litecoin
+    'MATICUSDT',  # Polygon
+    'ATOMUSDT',   # Cosmos
+    'NEARUSDT',   # NEAR Protocol
+    'FTMUSDT',    # Fantom
+    'ARBUSDT',    # Arbitrum
+    'OPUSDT',     # Optimism
+    'STXUSDT',    # Stacks
+    'INJUSDT',    # Injective
+    'LUNCUSDT',   # Luna Classic
+    'LUNAUSDT'    # Luna
 ]
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -68,7 +85,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"[✓] Config loaded")
 print(f"    Device: {device}")
 print(f"    Coin: {TRAINING_COIN}")
-print(f"    Epochs: {EPOCHS}\n")
+print(f"    Epochs: {EPOCHS}")
+print(f"    Available coins: {len(ALL_20_COINS)}\n")
 
 # ============================================================================
 # PART 1: Advanced Feature Engineering
@@ -566,4 +584,6 @@ print("="*80)
 print(f"Model: https://huggingface.co/datasets/{HF_REPO}/tree/main/{HF_VERSION}")
 print(f"Performance: Accuracy={acc:.4f}, F1={f1:.4f}, AUC={auc:.4f}")
 print(f"Entry Signal: {('LONG UP' if pred_class == 1 else 'SHORT DOWN')} (Confidence {pred_prob:.2%})")
+print(f"\nSupported coins: {len(ALL_20_COINS)}")
+print(f"Available: {', '.join(ALL_20_COINS)}")
 print("="*80)
