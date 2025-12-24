@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-V4 Training Pipeline for Colab
+V4 Training Pipeline for Colab - GPU Optimized
 Goal: Train Seq2Seq LSTM with Attention to predict next 10 OHLC candles
+GPU Memory: Limited to 13GB
 Features:
   - Input: 30 historical OHLC candles
   - Output: 10 future OHLC candles (Open, High, Low, Close)
@@ -9,6 +10,7 @@ Features:
   - Timeframes: 15m, 1h
   - 20 cryptocurrencies
   - Early stopping + dropout to prevent overfitting
+  - GPU memory optimization
 """
 
 import os
@@ -42,8 +44,43 @@ logger = logging.getLogger(__name__)
 from v4_model_architecture import Seq2SeqLSTM
 
 
+class GPUMemoryManager:
+    """GPU Memory Manager for 13GB limit"""
+    
+    MAX_GPU_MEMORY_GB = 13
+    
+    @staticmethod
+    def get_gpu_memory_usage():
+        """Get current GPU memory usage in GB"""
+        if torch.cuda.is_available():
+            return torch.cuda.memory_allocated() / 1e9
+        return 0
+    
+    @staticmethod
+    def get_gpu_memory_reserved():
+        """Get reserved GPU memory in GB"""
+        if torch.cuda.is_available():
+            return torch.cuda.memory_reserved() / 1e9
+        return 0
+    
+    @staticmethod
+    def log_gpu_memory(step_name):
+        """Log current GPU memory usage"""
+        if torch.cuda.is_available():
+            allocated = GPUMemoryManager.get_gpu_memory_usage()
+            reserved = GPUMemoryManager.get_gpu_memory_reserved()
+            logger.debug(f"  {step_name}: Allocated={allocated:.2f}GB, Reserved={reserved:.2f}GB")
+    
+    @staticmethod
+    def clear_gpu_memory():
+        """Clear GPU cache"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+
+
 class V4CoLabPipeline:
-    """V4 Training Pipeline with Seq2Seq"""
+    """V4 Training Pipeline with Seq2Seq - GPU Optimized"""
     
     # 20 coins (same as before)
     COINS = [
@@ -66,6 +103,12 @@ class V4CoLabPipeline:
         
         # Binance data.binance.vision base URL
         self.base_url = "https://data.binance.vision/data/spot/monthly/klines"
+        
+        # GPU optimization settings
+        if self.device == 'cuda':
+            torch.cuda.set_per_process_memory_fraction(0.95)  # Use up to 95% of 13GB
+            torch.backends.cudnn.benchmark = True  # Enable cuDNN autotuner
+            logger.info(f"GPU 記憶體限制: 13GB")
     
     def step_1_setup_environment(self):
         """Step 1: Setup environment"""
@@ -83,7 +126,9 @@ class V4CoLabPipeline:
         
         if torch.cuda.is_available():
             logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
-            logger.info(f"GPU 記憶體: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+            total_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+            logger.info(f"GPU 总記憶體: {total_memory:.2f} GB")
+            GPUMemoryManager.log_gpu_memory("初始化")
         else:
             logger.warning("使用 CPU (無 GPU 可用)")
         
@@ -172,13 +217,20 @@ class V4CoLabPipeline:
         
         return len(successful) > 0
     
-    def step_3_train_models(self, epochs: int = 200, batch_size: int = 16, learning_rate: float = 0.001):
-        """Step 3: Train V4 models"""
+    def step_3_train_models(self, epochs: int = 200, learning_rate: float = 0.001):
+        """Step 3: Train V4 models - GPU optimized"""
         logger.info("\n" + "="*80)
-        logger.info("STEP 3: 訓練 V4 模型 (Seq2Seq + Attention)")
+        logger.info("STEP 3: 訓練 V4 模型 (Seq2Seq + Attention) - GPU 優化")
         logger.info("="*80)
         logger.info(f"預測目標: 30根 K線 → 下一個 10根 K線")
-        logger.info(f"Epochs: {epochs}, Batch: {batch_size}, LR: {learning_rate}\n")
+        logger.info(f"Epochs: {epochs}, LR: {learning_rate}")
+        logger.info(f"GPU RAM 限制: 13GB")
+        
+        # 根據設備動态调整 batch size
+        # GPU VRAM 限制 13GB, 減小 batch size 以能夠正常訓練
+        batch_size = 8  # 有愛 GPU 記憶體限制，減少 batch size
+        
+        logger.info(f"Batch Size: {batch_size} (GPU RAM 優化)\n")
         
         data_files = sorted(list(self.data_dir.glob("*.csv")))
         logger.info(f"找到 {len(data_files)} 個數據文件\n")
@@ -194,6 +246,8 @@ class V4CoLabPipeline:
             logger.info(f"[{idx}/{len(data_files)}] 訓練 {pair_name}")
             
             try:
+                GPUMemoryManager.log_gpu_memory(f"  開始訓練 {pair_name}")
+                
                 # 讀取數據
                 logger.debug(f"  讀取: {csv_file}")
                 df = pd.read_csv(csv_file)
@@ -250,19 +304,31 @@ class V4CoLabPipeline:
                 X_val, y_val = X[train_size:train_size+val_size], y[train_size:train_size+val_size]
                 logger.debug(f"  訓練: {len(X_train)}, 驗證: {len(X_val)}, 測試: {len(X)-train_size-val_size}")
                 
-                # Create dataloaders
+                # Create dataloaders with pin_memory for GPU optimization
                 train_dataset = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train))
                 val_dataset = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val))
                 
-                train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-                val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+                train_loader = DataLoader(
+                    train_dataset, 
+                    batch_size=batch_size, 
+                    shuffle=True,
+                    pin_memory=True if self.device == 'cuda' else False,
+                    num_workers=0  # Single process to avoid memory overhead
+                )
+                val_loader = DataLoader(
+                    val_dataset, 
+                    batch_size=batch_size, 
+                    shuffle=False,
+                    pin_memory=True if self.device == 'cuda' else False,
+                    num_workers=0
+                )
                 logger.debug(f"  DataLoader 創建完成")
                 
-                # Create model
+                # Create model - 減小模型大小以節省記憶體
                 logger.debug(f"  創建模型...")
                 model = Seq2SeqLSTM(
                     input_size=4,
-                    hidden_size=128,
+                    hidden_size=96,  # 減小模型尺寸 (128 -> 96)
                     num_layers=2,
                     dropout=0.3,
                     steps_ahead=10,
@@ -272,12 +338,14 @@ class V4CoLabPipeline:
                 total_params = sum(p.numel() for p in model.parameters())
                 logger.debug(f"  模型參數: {total_params:,}")
                 
+                GPUMemoryManager.log_gpu_memory("  模型載入後")
+                
                 # Optimizer
                 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
                 criterion = nn.MSELoss()
                 logger.debug(f"  優化器: Adam, LR={learning_rate}, weight_decay=1e-5")
                 
-                # 使用簡單的學習率調度 (StepLR - 不使用 ReduceLROnPlateau)
+                # 使用簡單的學習率調度 (StepLR)
                 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.5)
                 logger.debug(f"  學習率調度: StepLR (每30個epoch減半)")
                 
@@ -296,9 +364,9 @@ class V4CoLabPipeline:
                     train_batches = 0
                     
                     try:
-                        for X_batch, y_batch in train_loader:
-                            X_batch = X_batch.to(self.device)
-                            y_batch = y_batch.to(self.device)
+                        for batch_idx, (X_batch, y_batch) in enumerate(train_loader):
+                            X_batch = X_batch.to(self.device, non_blocking=True)
+                            y_batch = y_batch.to(self.device, non_blocking=True)
                             
                             optimizer.zero_grad()
                             pred = model(X_batch, y_batch, teacher_forcing_ratio=0.5)
@@ -323,8 +391,8 @@ class V4CoLabPipeline:
                     try:
                         with torch.no_grad():
                             for X_batch, y_batch in val_loader:
-                                X_batch = X_batch.to(self.device)
-                                y_batch = y_batch.to(self.device)
+                                X_batch = X_batch.to(self.device, non_blocking=True)
+                                y_batch = y_batch.to(self.device, non_blocking=True)
                                 pred = model(X_batch, y_batch, teacher_forcing_ratio=0)
                                 loss = criterion(pred, y_batch)
                                 val_loss += loss.item()
@@ -339,6 +407,7 @@ class V4CoLabPipeline:
                     
                     if (epoch + 1) % 20 == 0:
                         logger.info(f"  Epoch {epoch+1:3d}/{epochs} - Train: {train_loss:.6f}, Val: {val_loss:.6f}")
+                        GPUMemoryManager.log_gpu_memory(f"    Epoch {epoch+1}")
                     else:
                         logger.debug(f"  Epoch {epoch+1:3d}/{epochs} - Train: {train_loss:.6f}, Val: {val_loss:.6f}")
                     
@@ -368,13 +437,20 @@ class V4CoLabPipeline:
                 }
                 
                 logger.info(f"  ✓ 完成 - Best Val Loss: {best_val_loss:.6f} (epoch {best_epoch})")
-                torch.cuda.empty_cache()
+                
+                # Clean up GPU memory
+                del model, optimizer, criterion, scheduler
+                del train_loader, val_loader, train_dataset, val_dataset
+                del X, y, X_train, X_val, y_train, y_val, df, data, normalized_data
+                GPUMemoryManager.clear_gpu_memory()
+                GPUMemoryManager.log_gpu_memory("  清理後")
                 
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"  ✗ 錯誤: {error_msg[:80]}")
                 logger.debug(f"    完整錯誤: {error_msg}")
                 training_results[pair_name] = {'status': 'failed', 'error': error_msg}
+                GPUMemoryManager.clear_gpu_memory()
         
         # Save results
         results_path = self.results_dir / 'v4_training_results.json'
@@ -387,11 +463,12 @@ class V4CoLabPipeline:
         
         return successful > 0
     
-    def run_full_pipeline(self, epochs: int = 200, batch_size: int = 16, learning_rate: float = 0.001):
+    def run_full_pipeline(self, epochs: int = 200, learning_rate: float = 0.001):
         """Run complete pipeline"""
         logger.info("\n" + "#"*80)
         logger.info("# V4 Training Pipeline - Seq2Seq LSTM with Attention")
         logger.info("# Goal: Predict next 10 OHLC candles based on previous 30")
+        logger.info("# GPU RAM Limit: 13GB")
         logger.info("#"*80)
         
         try:
@@ -401,7 +478,7 @@ class V4CoLabPipeline:
                 logger.error("數據下載失敗")
                 return False
             
-            if not self.step_3_train_models(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate):
+            if not self.step_3_train_models(epochs=epochs, learning_rate=learning_rate):
                 logger.error("訓練失敗")
                 return False
             
@@ -419,5 +496,5 @@ class V4CoLabPipeline:
 
 if __name__ == "__main__":
     pipeline = V4CoLabPipeline()
-    success = pipeline.run_full_pipeline(epochs=200, batch_size=16, learning_rate=0.001)
+    success = pipeline.run_full_pipeline(epochs=200, learning_rate=0.001)
     sys.exit(0 if success else 1)
