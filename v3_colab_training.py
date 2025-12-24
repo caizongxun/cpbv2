@@ -12,7 +12,7 @@ import warnings
 import zipfile
 import requests
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import torch
@@ -88,13 +88,16 @@ class V3CoLabPipeline:
         completed = 0
         failed = []
         
-        # Get last 3 months
+        # Get last 6 months (more data for better training)
         now = datetime.now()
-        months_to_download = [
-            (now.year, now.month),
-            ((now.year if now.month > 1 else now.year - 1), (now.month - 1 if now.month > 1 else 12)),
-            ((now.year if now.month > 2 else now.year - 1), (now.month - 2 if now.month > 2 else now.month + 10 if now.month > 2 else 12))
-        ]
+        months_to_download = []
+        for i in range(6):
+            month = now.month - i
+            year = now.year
+            if month <= 0:
+                month += 12
+                year -= 1
+            months_to_download.append((year, month))
         
         for coin in self.COINS:
             for timeframe in self.TIMEFRAMES:
@@ -103,6 +106,7 @@ class V3CoLabPipeline:
                     logger.info(f"[{completed}/{total_pairs}] 下載 {coin} {timeframe}")
                     
                     all_data = []
+                    success_count = 0
                     
                     # Download multiple months
                     for year, month in months_to_download:
@@ -113,17 +117,24 @@ class V3CoLabPipeline:
                             response = requests.get(url, timeout=30)
                             
                             if response.status_code == 200:
-                                with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
-                                    file_list = zip_ref.namelist()
-                                    if file_list:
-                                        csv_filename = file_list[0]
-                                        with zip_ref.open(csv_filename) as f:
-                                            df_month = pd.read_csv(f, header=None)
-                                            all_data.append(df_month)
+                                try:
+                                    with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
+                                        file_list = zip_ref.namelist()
+                                        if file_list:
+                                            csv_filename = file_list[0]
+                                            with zip_ref.open(csv_filename) as f:
+                                                df_month = pd.read_csv(f, header=None)
+                                                if len(df_month) > 0:
+                                                    all_data.append(df_month)
+                                                    success_count += 1
+                                except Exception as zip_error:
+                                    logger.debug(f"    Zip error for {year}-{month_str}: {zip_error}")
+                                    pass
                         except Exception as e:
+                            logger.debug(f"    Request error for {year}-{month_str}: {e}")
                             pass
                     
-                    if all_data:
+                    if len(all_data) > 0:
                         # Combine all months
                         df = pd.concat(all_data, ignore_index=True)
                         
@@ -142,45 +153,47 @@ class V3CoLabPipeline:
                             # Save
                             csv_path = self.data_dir / f"{coin}_{timeframe}.csv"
                             df[['Open', 'High', 'Low', 'Close', 'Volume']].to_csv(csv_path, index=False)
-                            logger.info(f"  已保存 {len(df)} 根K線")
+                            logger.info(f"  ✓ 已保存 {len(df)} 根K線 ({success_count} 個月)")
                         else:
+                            logger.warning(f"  ✗ 數據為空")
                             failed.append(f"{coin}_{timeframe}")
                     else:
+                        logger.error(f"  ✗ 無法下載任何數據")
                         failed.append(f"{coin}_{timeframe}")
                     
                 except Exception as e:
-                    logger.error(f"下載 {coin} {timeframe} 失敗: {e}")
+                    logger.error(f"  ✗ 異常: {e}")
                     failed.append(f"{coin}_{timeframe}")
         
         logger.info(f"\n下載摘要: {total_pairs - len(failed)}/{total_pairs} 成功")
         if failed:
             logger.warning(f"失敗: {failed}")
         
-        return len(failed) < (total_pairs * 0.5)
+        return len(failed) < (total_pairs * 0.3)  # Success if at least 70% downloaded
     
     def step_3_train_models(self, epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001):
         """Step 3: Train models"""
         logger.info("\n" + "="*80)
         logger.info("STEP 3: 訓練模型")
         logger.info("="*80)
-        logger.info(f"總共訓練: {len(self.COINS)} 個模型")
+        
+        # Get available data files
+        data_files = sorted(list(self.data_dir.glob("*_1h.csv")))
+        logger.info(f"找到 {len(data_files)} 個數據文件")
+        
+        if len(data_files) == 0:
+            logger.error("沒有找到任何數據文件！")
+            return False
         
         training_results = {}
         
-        for idx, coin in enumerate(self.COINS, 1):
-            pair_name = f"{coin}_1h"
+        for idx, csv_file in enumerate(data_files, 1):
+            pair_name = csv_file.stem
             
-            logger.info(f"\n[{idx}/{len(self.COINS)}] 訓練 {pair_name}")
+            logger.info(f"\n[{idx}/{len(data_files)}] 訓練 {pair_name}")
             
             try:
-                # Load data
-                csv_path = self.data_dir / f"{pair_name}.csv"
-                if not csv_path.exists():
-                    logger.warning(f"文件未找到: {pair_name}")
-                    training_results[pair_name] = {'status': 'skipped', 'reason': 'data_not_found'}
-                    continue
-                
-                df = pd.read_csv(csv_path)
+                df = pd.read_csv(csv_file)
                 
                 if len(df) < 200:
                     logger.warning(f"數據不足: {len(df)} 列")
@@ -188,7 +201,7 @@ class V3CoLabPipeline:
                     continue
                 
                 # Simple preprocessing
-                close_prices = df['Close'].values
+                close_prices = df['Close'].values.astype(np.float32)
                 
                 # Normalize
                 mean_price = close_prices.mean()
@@ -234,7 +247,6 @@ class V3CoLabPipeline:
                         self.fc = nn.Linear(hidden_size, 1)
                     
                     def forward(self, x):
-                        # x: (batch, seq_len)
                         x = x.unsqueeze(-1)  # (batch, seq_len, 1)
                         lstm_out, _ = self.lstm(x)
                         last_out = lstm_out[:, -1, :]
@@ -312,7 +324,11 @@ class V3CoLabPipeline:
             json.dump(training_results, f, indent=2)
         logger.info(f"\n訓練結果已保存")
         
-        return True
+        # Summary
+        successful = sum(1 for r in training_results.values() if r['status'] == 'success')
+        logger.info(f"\n訓練摘要: {successful}/{len(training_results)} 成功")
+        
+        return successful > 0
     
     def run_full_pipeline(self, epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001):
         """Run complete pipeline"""
@@ -325,7 +341,7 @@ class V3CoLabPipeline:
         
         # Step 2
         if not self.step_2_download_binance_data():
-            logger.warning("數據下載遇到問題")
+            logger.warning("警告: 部分數據下載失敗，但繼續使用可用數據")
         
         # Step 3
         if not self.step_3_train_models(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate):
