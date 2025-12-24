@@ -2,21 +2,21 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.5 (Aggressive shell cleanup with version display)
+# Version: 1.0.6 (Compatible version pinning)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
 
 print("\n" + "="*80)
-print("CPB V3 Model Training Pipeline - v1.0.5")
-print("Updated: 2025-12-24")
+print("CPB V3 Model Training Pipeline - v1.0.6")
+print("Updated: 2025-12-24 - Compatible Version Pinning")
 print("="*80 + "\n")
 
 import os
 import sys
 
 # ============================================================================
-# STEP 0: Aggressive Shell Cleanup
+# STEP 0: Aggressive Shell Cleanup with Compatible Versions
 # ============================================================================
 print("[*] STEP 0: 強制清理環境 (Aggressive Cleanup)...")
 print("[!] 使用 pip cache 清理 + 強制卸載衝突包...\n")
@@ -34,12 +34,13 @@ for pkg in conflict_pkgs:
     os.system(f"{sys.executable} -m pip uninstall -y {pkg} 2>&1 | grep -i uninstalling")
 
 print("\n[✓] 快取清理 + 完整卸載完成\n")
-print("[*] 安裝最新穩定版本...\n")
+print("[*] 安裝相容版本 (手動選擇補上是最新穩定版本)...\n")
 
-# Install fresh
+# Install with compatible pinning
 os.system(
     f"{sys.executable} -m pip install --no-cache-dir "
-    "numpy scipy scikit-learn tensorflow pandas ccxt huggingface-hub 2>&1 | tail -5"
+    "'numpy<2.0' scipy scikit-learn tensorflow pandas ccxt huggingface-hub "
+    "2>&1 | tail -8"
 )
 
 print("\n[✓] 環境重置完成\n")
