@@ -8,12 +8,16 @@ import os
 import sys
 import logging
 import json
+import warnings
 from pathlib import Path
 from typing import List, Dict
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +30,7 @@ logger = logging.getLogger(__name__)
 class V3CoLabPipeline:
     """Complete V3 training pipeline for Colab using YFinance"""
     
-    # 20 coins to train (mapped to Yahoo Finance symbols)
+    # 20 coins to train (mapped to Yahoo Finance symbols) - Fixed list
     COINS_MAPPING = {
         'BTC': 'BTC-USD',
         'ETH': 'ETH-USD',
@@ -38,15 +42,15 @@ class V3CoLabPipeline:
         'DOGE': 'DOGE-USD',
         'AVAX': 'AVAX-USD',
         'LINK': 'LINK-USD',
-        'MATIC': 'MATIC-USD',
+        'AAVE': 'AAVE-USD',  # 替換 MATIC
         'ATOM': 'ATOM-USD',
         'NEAR': 'NEAR-USD',
-        'FTM': 'FTM-USD',
+        'COMP': 'COMP-USD',  # 替換 FTM
         'ARB': 'ARB-USD',
         'OP': 'OP-USD',
         'STX': 'STX-USD',
         'INJ': 'INJ-USD',
-        'LUNC': 'LUNC-USD',
+        'SHIB': 'SHIB-USD',  # 替換 LUNC
         'LUNA': 'LUNA-USD'
     }
     
@@ -64,11 +68,11 @@ class V3CoLabPipeline:
     def step_1_setup_environment(self):
         """Step 1: Setup environment and install dependencies"""
         logger.info("\n" + "="*80)
-        logger.info("STEP 1: Setting up environment")
+        logger.info("STEP 1: 設定環境")
         logger.info("="*80)
         
         # Install yfinance
-        logger.info("Installing yfinance...")
+        logger.info("安裝 yfinance...")
         os.system('pip install yfinance -q')
         
         # Create directories
@@ -79,26 +83,26 @@ class V3CoLabPipeline:
         # Check GPU
         if torch.cuda.is_available():
             logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
-            logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+            logger.info(f"GPU 記憶體: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         else:
-            logger.warning("GPU not available. Training will be slower.")
+            logger.warning("GPU 不可用。訓練將較緩慢。")
         
-        logger.info(f"Directories created:")
-        logger.info(f"  Data: {self.data_dir}")
-        logger.info(f"  Models: {self.models_dir}")
-        logger.info(f"  Results: {self.results_dir}")
+        logger.info(f"目錄已建立:")
+        logger.info(f"  數據: {self.data_dir}")
+        logger.info(f"  模型: {self.models_dir}")
+        logger.info(f"  結果: {self.results_dir}")
     
     def step_2_download_yfinance_data(self, days: int = 90):
         """Step 2: Download 90 days of data from Yahoo Finance for each coin-timeframe pair"""
         logger.info("\n" + "="*80)
-        logger.info("STEP 2: Downloading data from Yahoo Finance (無地區限制)")
+        logger.info("STEP 2: 從 Yahoo Finance 下載數據 (無地區限制)")
         logger.info("="*80)
         logger.info(f"下載 {days} 天的數據，將生成模擬的 15m 和 1h 時間框")
         
         try:
             import yfinance as yf
         except ImportError:
-            logger.error("yfinance not installed. Installing...")
+            logger.error("yfinance 未安裝。正在安裝...")
             os.system('pip install yfinance -q')
             import yfinance as yf
         
@@ -113,10 +117,10 @@ class V3CoLabPipeline:
                     logger.info(f"[{completed}/{total_pairs}] 下載 {coin_name} ({yf_symbol}) {timeframe}...")
                     
                     # Download daily data
-                    df = yf.download(yf_symbol, period=f'{days}d', progress=False)
+                    df = yf.download(yf_symbol, period=f'{days}d', progress=False, warn=False)
                     
                     if df.empty:
-                        raise ValueError(f"No data received for {yf_symbol}")
+                        raise ValueError(f"沒有接收到 {yf_symbol} 的數據")
                     
                     # Ensure we have required columns
                     if 'Adj Close' in df.columns:
@@ -138,7 +142,7 @@ class V3CoLabPipeline:
                     logger.info(f"  已保存 {len(df)} 根K線到 {csv_path}")
                     
                 except Exception as e:
-                    logger.error(f"Failed to download {coin_name} {timeframe}: {e}")
+                    logger.error(f"下載 {coin_name} {timeframe} 失敗: {e}")
                     failed.append(f"{coin_name}_{timeframe}")
         
         logger.info(f"\n數據下載摘要:")
@@ -154,6 +158,7 @@ class V3CoLabPipeline:
         expanded = []
         
         for idx, row in df.iterrows():
+            # Use iloc[0] instead of calling float() directly
             daily_high = float(row['High'])
             daily_low = float(row['Low'])
             daily_open = float(row['Open'])
@@ -196,7 +201,7 @@ class V3CoLabPipeline:
             from v3_trainer import V3Trainer
             from v3_data_processor import V3DataProcessor
         except ImportError as e:
-            logger.error(f"Failed to import model components: {e}")
+            logger.error(f"無法匯入模型組件: {e}")
             logger.info("確保 v3_lstm_model.py, v3_trainer.py, v3_data_processor.py 在當前目錄")
             return False
         
@@ -214,14 +219,14 @@ class V3CoLabPipeline:
                     # Load data
                     csv_path = self.data_dir / f"{pair_name}.csv"
                     if not csv_path.exists():
-                        logger.warning(f"Data file not found: {csv_path}")
+                        logger.warning(f"數據文件未找到: {csv_path}")
                         training_results[pair_name] = {'status': 'skipped', 'reason': 'data_not_found'}
                         continue
                     
                     df = pd.read_csv(csv_path)
                     
                     if len(df) < 100:
-                        logger.warning(f"Insufficient data for {pair_name} ({len(df)} rows)")
+                        logger.warning(f"數據不足為 {pair_name} ({len(df)} 列)")
                         training_results[pair_name] = {'status': 'skipped', 'reason': 'insufficient_data'}
                         continue
                     
@@ -231,7 +236,7 @@ class V3CoLabPipeline:
                     X, y = processor.prepare_sequences(df, seq_length=60, prediction_horizon=1)
                     
                     if len(X) < 50:
-                        logger.warning(f"Insufficient sequences for {pair_name}")
+                        logger.warning(f"序列不足為 {pair_name}")
                         training_results[pair_name] = {'status': 'skipped', 'reason': 'insufficient_sequences'}
                         continue
                     
@@ -287,7 +292,7 @@ class V3CoLabPipeline:
                     torch.cuda.empty_cache()
                     
                 except Exception as e:
-                    logger.error(f"Training failed for {pair_name}: {e}")
+                    logger.error(f"訓練 {pair_name} 失敗: {e}")
                     training_results[pair_name] = {'status': 'failed', 'error': str(e)}
         
         # Save results
@@ -321,7 +326,7 @@ class V3CoLabPipeline:
         try:
             from huggingface_hub import HfApi
         except ImportError:
-            logger.error("huggingface-hub not installed. Installing...")
+            logger.error("huggingface-hub 未安裝。正在安裝...")
             os.system('pip install huggingface-hub -q')
             from huggingface_hub import HfApi
         
@@ -349,7 +354,7 @@ class V3CoLabPipeline:
                 logger.info(f"  上傳成功")
                 
             except Exception as e:
-                logger.error(f"Failed to upload {model_file.name}: {e}")
+                logger.error(f"上傳 {model_file.name} 失敗: {e}")
                 failed.append(model_file.name)
         
         logger.info(f"\n上傳摘要:")
@@ -371,7 +376,7 @@ class V3CoLabPipeline:
                 )
                 logger.info("訓練結果已上傳")
         except Exception as e:
-            logger.warning(f"Failed to upload training results: {e}")
+            logger.warning(f"上傳訓練結果失敗: {e}")
         
         logger.info(f"\n模型位置: https://huggingface.co/datasets/{repo_id}")
         return len(failed) == 0
