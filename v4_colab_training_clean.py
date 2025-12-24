@@ -36,22 +36,35 @@ from v4_model_architecture import Seq2SeqLSTM
 
 class V4Pipeline:
     def __init__(self, base_dir='/content'):
+        # 檢查 GPU
         if not torch.cuda.is_available():
             print("ERROR: GPU not available!")
             sys.exit(1)
         
-        self.device = torch.device('cuda')
+        # 明確設置 GPU
+        torch.cuda.set_device(0)
+        self.device = torch.device('cuda:0')
+        
         self.base_dir = Path(base_dir)
         self.data_dir = self.base_dir / 'data_v4'
         self.models_dir = self.base_dir / 'v4_models'
         self.results_dir = self.base_dir / 'v4_results'
         
+        # GPU 優化設置
         torch.cuda.set_per_process_memory_fraction(0.95)
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.enabled = True
         
-        print(f"✓ GPU: {torch.cuda.get_device_name(0)}")
-        print(f"✓ CUDA: {torch.version.cuda}")
-        print(f"✓ GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        # 打印 GPU 信息
+        print("="*80)
+        print("GPU Configuration")
+        print("="*80)
+        print(f"✓ CUDA Available: {torch.cuda.is_available()}")
+        print(f"✓ CUDA Device: {torch.cuda.get_device_name(0)}")
+        print(f"✓ CUDA Version: {torch.version.cuda}")
+        print(f"✓ CuDNN Version: {torch.backends.cudnn.version()}")
+        print(f"✓ Total GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        print(f"✓ Device: {self.device}")
         print()
     
     def setup(self):
@@ -131,7 +144,9 @@ class V4Pipeline:
         return successful > 0
     
     def train(self, epochs=200, lr=0.001):
-        print("\nStarting training...\n")
+        print("\n" + "="*80)
+        print("Starting Training")
+        print("="*80 + "\n")
         
         files = sorted(list(self.data_dir.glob("*.csv")))
         if not files:
@@ -191,10 +206,17 @@ class V4Pipeline:
                 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=0)
                 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=0)
                 
+                # 創建模型並明確移到 GPU
                 model = Seq2SeqLSTM(input_size=4, hidden_size=96, num_layers=2, dropout=0.3, steps_ahead=10, output_size=4)
                 model = model.to(self.device)
                 
-                print(f"  GPU Memory: {torch.cuda.memory_allocated() / 1e9:.2f}GB")
+                # 檢查模型是否在 GPU 上
+                print(f"  Model device: {next(model.parameters()).device}")
+                
+                # 打印 GPU 使用情況
+                torch.cuda.reset_peak_memory_stats()
+                allocated_before = torch.cuda.memory_allocated() / 1e9
+                print(f"  GPU Memory Before: {allocated_before:.2f}GB")
                 
                 optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
                 criterion = nn.MSELoss()
@@ -209,8 +231,10 @@ class V4Pipeline:
                     model.train()
                     train_loss = 0
                     for X_batch, y_batch in train_loader:
+                        # 明確移到 GPU
                         X_batch = X_batch.to(self.device, non_blocking=True)
                         y_batch = y_batch.to(self.device, non_blocking=True)
+                        
                         optimizer.zero_grad()
                         pred = model(X_batch, y_batch, teacher_forcing_ratio=0.5)
                         loss = criterion(pred, y_batch)
@@ -224,6 +248,7 @@ class V4Pipeline:
                     val_loss = 0
                     with torch.no_grad():
                         for X_batch, y_batch in val_loader:
+                            # 明確移到 GPU
                             X_batch = X_batch.to(self.device, non_blocking=True)
                             y_batch = y_batch.to(self.device, non_blocking=True)
                             pred = model(X_batch, y_batch, teacher_forcing_ratio=0)
@@ -234,7 +259,8 @@ class V4Pipeline:
                     scheduler.step()
                     
                     if (epoch + 1) % 20 == 0:
-                        print(f"  Epoch {epoch+1:3d} - Train: {train_loss:.6f}, Val: {val_loss:.6f}")
+                        allocated = torch.cuda.memory_allocated() / 1e9
+                        print(f"  Epoch {epoch+1:3d} - Train: {train_loss:.6f}, Val: {val_loss:.6f}, GPU: {allocated:.2f}GB")
                         sys.stdout.flush()
                     
                     if val_loss < best_val_loss:
@@ -248,14 +274,19 @@ class V4Pipeline:
                         if patience_count >= patience:
                             break
                 
+                # 最終 GPU 使用情況
+                allocated_after = torch.cuda.memory_allocated() / 1e9
+                peak = torch.cuda.max_memory_allocated() / 1e9
+                print(f"  ✓ Done - Best Loss: {best_val_loss:.6f} at epoch {best_epoch}")
+                print(f"  GPU Memory - Current: {allocated_after:.2f}GB, Peak: {peak:.2f}GB")
+                
                 results[pair_name] = {
                     'status': 'success',
                     'best_val_loss': float(best_val_loss),
                     'best_epoch': best_epoch,
-                    'epochs_trained': epoch + 1
+                    'epochs_trained': epoch + 1,
+                    'peak_gpu_memory': float(peak)
                 }
-                
-                print(f"  ✓ Done - Best Loss: {best_val_loss:.6f}")
                 
                 del model, optimizer, criterion, scheduler
                 del train_loader, val_loader
@@ -263,6 +294,8 @@ class V4Pipeline:
                 
             except Exception as e:
                 print(f"  ✗ Error: {str(e)[:80]}")
+                import traceback
+                traceback.print_exc()
                 results[pair_name] = {'status': 'failed', 'error': str(e)}
             
             sys.stdout.flush()
@@ -272,7 +305,9 @@ class V4Pipeline:
             json.dump(results, f, indent=2)
         
         successful = sum(1 for r in results.values() if r['status'] == 'success')
-        print(f"\nTraining Complete: {successful}/{len(files)} success")
+        print(f"\n" + "="*80)
+        print(f"Training Complete: {successful}/{len(files)} success")
+        print("="*80)
         
         return successful > 0
 
