@@ -2,7 +2,7 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.3 (Subprocess parameter fix)
+# Version: 1.0.4 (Use latest stable versions)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
@@ -11,7 +11,7 @@ import os
 import sys
 
 # ============================================================================
-# STEP 0: Complete Environment Reset
+# STEP 0: Complete Environment Reset (Latest Stable Versions)
 # ============================================================================
 print("[*] 強制清理環境...")
 print("[!] 卸載所有與numpy/scipy/sklearn相關的包...\n")
@@ -25,16 +25,12 @@ for pkg in conflict_pkgs:
     os.system(f"{sys.executable} -m pip uninstall -y {pkg} > /dev/null 2>&1")
 
 print("[✓] 清理完成\n")
-print("[*] 安裝相容版本之間的依賴...\n")
+print("[*] 安裝最新穩定版本的依賴...\n")
 
-# Install compatible versions
+# Install latest stable versions (no pinning)
 os.system(
     f"{sys.executable} -m pip install -q "
-    "numpy==1.23.5 "
-    "scipy==1.11.4 "
-    "scikit-learn==1.3.2 "
-    "tensorflow==2.13.0 "
-    "pandas ccxt huggingface-hub --no-cache-dir"
+    "numpy scipy scikit-learn tensorflow pandas ccxt huggingface-hub --upgrade"
 )
 
 print("\n[✓] 一轉強清及重新安裝完成\n")
