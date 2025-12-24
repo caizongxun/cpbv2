@@ -2,43 +2,52 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.4 (Use latest stable versions)
+# Version: 1.0.5 (Aggressive shell cleanup with version display)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
+
+print("\n" + "="*80)
+print("CPB V3 Model Training Pipeline - v1.0.5")
+print("Updated: 2025-12-24")
+print("="*80 + "\n")
 
 import os
 import sys
 
 # ============================================================================
-# STEP 0: Complete Environment Reset (Latest Stable Versions)
+# STEP 0: Aggressive Shell Cleanup
 # ============================================================================
-print("[*] 強制清理環境...")
-print("[!] 卸載所有與numpy/scipy/sklearn相關的包...\n")
+print("[*] STEP 0: 強制清理環境 (Aggressive Cleanup)...")
+print("[!] 使用 pip cache 清理 + 強制卸載衝突包...\n")
 
-# Force uninstall conflicting packages
+# Clear pip cache
+os.system(f"{sys.executable} -m pip cache purge > /dev/null 2>&1")
+
+# Aggressive uninstall
 conflict_pkgs = [
-    "numpy", "scipy", "scikit-learn", "tensorflow", "keras"
+    "numpy", "scipy", "scikit-learn", "sklearn",
+    "tensorflow", "keras", "pandas"
 ]
 
 for pkg in conflict_pkgs:
-    os.system(f"{sys.executable} -m pip uninstall -y {pkg} > /dev/null 2>&1")
+    os.system(f"{sys.executable} -m pip uninstall -y {pkg} 2>&1 | grep -i uninstalling")
 
-print("[✓] 清理完成\n")
-print("[*] 安裝最新穩定版本的依賴...\n")
+print("\n[✓] 快取清理 + 完整卸載完成\n")
+print("[*] 安裝最新穩定版本...\n")
 
-# Install latest stable versions (no pinning)
+# Install fresh
 os.system(
-    f"{sys.executable} -m pip install -q "
-    "numpy scipy scikit-learn tensorflow pandas ccxt huggingface-hub --upgrade"
+    f"{sys.executable} -m pip install --no-cache-dir "
+    "numpy scipy scikit-learn tensorflow pandas ccxt huggingface-hub 2>&1 | tail -5"
 )
 
-print("\n[✓] 一轉強清及重新安裝完成\n")
+print("\n[✓] 環境重置完成\n")
 
 # ============================================================================
 # STEP 1: Configuration
 # ============================================================================
-print("[*] 配置參數...\n")
+print("[*] STEP 1: 配置參數...\n")
 
 # User Configuration
 TRAINING_COIN = "BTCUSDT"
@@ -65,21 +74,37 @@ print(f"    K 棒數量: {DATA_LIMIT}\n")
 # ============================================================================
 # STEP 2: Import Libraries
 # ============================================================================
+print("[*] STEP 2: 導入所有依賴...\n")
+
 import numpy as np
+print(f"  [+] NumPy: {np.__version__}")
+
 import pandas as pd
+print(f"  [+] Pandas: {pd.__version__}")
+
 from sklearn.preprocessing import MinMaxScaler
+print(f"  [+] scikit-learn imported")
+
 import ccxt
+print(f"  [+] CCXT imported")
+
 import tensorflow as tf
+print(f"  [+] TensorFlow: {tf.__version__}")
+
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Dropout, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
+print(f"  [+] TensorFlow Keras layers imported")
+
 from huggingface_hub import HfApi, HfFolder
+print(f"  [+] HuggingFace Hub imported")
+
 import json
 from pathlib import Path
 import tempfile
 
-print("[✓] 所有包導入成功\n")
+print("\n[✓] 所有包導入成功\n")
 
 # ============================================================================
 # PART 1: Download Data from Binance
