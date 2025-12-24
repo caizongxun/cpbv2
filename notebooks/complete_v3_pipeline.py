@@ -2,19 +2,25 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.0
+# Version: 1.0.1 (NumPy compatibility fix)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
 
 import os
 import sys
+import subprocess
 
 # ============================================================================
-# STEP 0: Install Dependencies
+# STEP 0: Install Dependencies with Compatible Versions
 # ============================================================================
 print("[*] 安裝依賴...")
-os.system("pip install -q tensorflow numpy pandas ccxt scikit-learn huggingface-hub --upgrade")
+print("[!] 修復 NumPy 版本衝突...")
+
+# Fix NumPy/TensorFlow compatibility
+os.system("pip install -q numpy==1.24.3")
+os.system("pip install -q tensorflow==2.14.0 pandas ccxt scikit-learn huggingface-hub --upgrade")
+
 print("[✓] 依賴安裝完成\n")
 
 # ============================================================================
@@ -22,7 +28,7 @@ print("[✓] 依賴安裝完成\n")
 # ============================================================================
 print("[*] 配置參數...\n")
 
-# User Input
+# User Configuration
 TRAINING_COIN = "BTCUSDT"
 EPOCHS = 80
 DATA_LIMIT = 3500
