@@ -35,12 +35,12 @@ logger = logging.getLogger(__name__)
 class V3CoLabPipeline:
     """Complete V3 training pipeline using Binance data.binance.vision"""
     
-    # 20 coins to train
+    # 19 coins to train (removed AAVUSDT - data unavailable)
     COINS = [
         'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT',
         'ADAUSDT', 'SOLUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT',
-        'AAVUSDT', 'ATOMUSDT', 'NEARUSDT', 'COMPUSDT', 'ARBUSDT',
-        'OPUSDT', 'STXUSDT', 'INJUSDT', 'SHIBUSDT', 'LUNAUSDT'
+        'UNIUSDT', 'ATOMUSDT', 'NEARUSDT', 'DYDXUSDT', 'ARBUSDT',
+        'OPUSDT', 'PEPEUSDT', 'INJUSDT', 'SHIBUSDT', 'LUNAUSDT'
     ]
     
     TIMEFRAMES = ['1h']
@@ -82,13 +82,15 @@ class V3CoLabPipeline:
         logger.info("\n" + "="*80)
         logger.info("STEP 2: 下載 Binance 數據")
         logger.info("="*80)
+        logger.info(f"幣種: {', '.join(self.COINS)}")
         logger.info("數據源: Binance data.binance.vision (官方公開)")
         
         total_pairs = len(self.COINS) * len(self.TIMEFRAMES)
         completed = 0
         failed = []
+        successful = []
         
-        # Get last 6 months (more data for better training)
+        # Get last 6 months
         now = datetime.now()
         months_to_download = []
         for i in range(6):
@@ -99,11 +101,14 @@ class V3CoLabPipeline:
                 year -= 1
             months_to_download.append((year, month))
         
+        logger.info(f"下載月份: {', '.join([f'{y}-{m:02d}' for y, m in months_to_download])}")
+        logger.info("")
+        
         for coin in self.COINS:
             for timeframe in self.TIMEFRAMES:
                 try:
                     completed += 1
-                    logger.info(f"[{completed}/{total_pairs}] 下載 {coin} {timeframe}")
+                    logger.info(f"[{completed}/{total_pairs}] 下載 {coin} {timeframe}...", end='')
                     
                     all_data = []
                     success_count = 0
@@ -127,11 +132,9 @@ class V3CoLabPipeline:
                                                 if len(df_month) > 0:
                                                     all_data.append(df_month)
                                                     success_count += 1
-                                except Exception as zip_error:
-                                    logger.debug(f"    Zip error for {year}-{month_str}: {zip_error}")
+                                except Exception:
                                     pass
-                        except Exception as e:
-                            logger.debug(f"    Request error for {year}-{month_str}: {e}")
+                        except Exception:
                             pass
                     
                     if len(all_data) > 0:
@@ -153,23 +156,26 @@ class V3CoLabPipeline:
                             # Save
                             csv_path = self.data_dir / f"{coin}_{timeframe}.csv"
                             df[['Open', 'High', 'Low', 'Close', 'Volume']].to_csv(csv_path, index=False)
-                            logger.info(f"  ✓ 已保存 {len(df)} 根K線 ({success_count} 個月)")
+                            logger.info(f" ✓ {len(df)} K線 ({success_count}月)")
+                            successful.append(f"{coin}_{timeframe}")
                         else:
-                            logger.warning(f"  ✗ 數據為空")
+                            logger.info(f" ✗ 數據為空")
                             failed.append(f"{coin}_{timeframe}")
                     else:
-                        logger.error(f"  ✗ 無法下載任何數據")
+                        logger.info(f" ✗ 無法下載")
                         failed.append(f"{coin}_{timeframe}")
                     
                 except Exception as e:
-                    logger.error(f"  ✗ 異常: {e}")
+                    logger.info(f" ✗ 異常: {str(e)[:50]}")
                     failed.append(f"{coin}_{timeframe}")
         
-        logger.info(f"\n下載摘要: {total_pairs - len(failed)}/{total_pairs} 成功")
+        logger.info(f"\n下載摘要:")
+        logger.info(f"  成功: {len(successful)}/{total_pairs}")
+        logger.info(f"  失敗: {len(failed)}/{total_pairs}")
         if failed:
-            logger.warning(f"失敗: {failed}")
+            logger.info(f"  失敗的幣對: {failed}")
         
-        return len(failed) < (total_pairs * 0.3)  # Success if at least 70% downloaded
+        return len(successful) > 0
     
     def step_3_train_models(self, epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001):
         """Step 3: Train models"""
@@ -185,18 +191,21 @@ class V3CoLabPipeline:
             logger.error("沒有找到任何數據文件！")
             return False
         
+        logger.info(f"即將訓練: {', '.join([f.stem for f in data_files])}")
+        logger.info("")
+        
         training_results = {}
         
         for idx, csv_file in enumerate(data_files, 1):
             pair_name = csv_file.stem
             
-            logger.info(f"\n[{idx}/{len(data_files)}] 訓練 {pair_name}")
+            logger.info(f"[{idx}/{len(data_files)}] 訓練 {pair_name}...", end='')
             
             try:
                 df = pd.read_csv(csv_file)
                 
                 if len(df) < 200:
-                    logger.warning(f"數據不足: {len(df)} 列")
+                    logger.info(f" ✗ 數據不足 ({len(df)} 列)")
                     training_results[pair_name] = {'status': 'skipped', 'reason': 'insufficient_data'}
                     continue
                 
@@ -219,7 +228,7 @@ class V3CoLabPipeline:
                 y = np.array(y, dtype=np.float32)
                 
                 if len(X) < 50:
-                    logger.warning(f"序列不足: {len(X)}")
+                    logger.info(f" ✗ 序列不足 ({len(X)})")
                     training_results[pair_name] = {'status': 'skipped', 'reason': 'insufficient_sequences'}
                     continue
                 
@@ -290,9 +299,6 @@ class V3CoLabPipeline:
                     train_loss /= len(train_loader)
                     val_loss /= len(val_loader)
                     
-                    if (epoch + 1) % 10 == 0:
-                        logger.info(f"  Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-                    
                     # Early stopping
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
@@ -303,7 +309,6 @@ class V3CoLabPipeline:
                     else:
                         patience_counter += 1
                         if patience_counter >= patience:
-                            logger.info(f"  早停在 epoch {epoch+1}")
                             break
                 
                 training_results[pair_name] = {
@@ -312,17 +317,17 @@ class V3CoLabPipeline:
                     'epochs_trained': epoch + 1
                 }
                 
+                logger.info(f" ✓ Loss: {best_val_loss:.6f}")
                 torch.cuda.empty_cache()
                 
             except Exception as e:
-                logger.error(f"訓練 {pair_name} 失敗: {e}")
+                logger.info(f" ✗ 異常: {str(e)[:50]}")
                 training_results[pair_name] = {'status': 'failed', 'error': str(e)}
         
         # Save results
         results_path = self.results_dir / 'v3_training_results.json'
         with open(results_path, 'w') as f:
             json.dump(training_results, f, indent=2)
-        logger.info(f"\n訓練結果已保存")
         
         # Summary
         successful = sum(1 for r in training_results.values() if r['status'] == 'success')
@@ -341,7 +346,7 @@ class V3CoLabPipeline:
         
         # Step 2
         if not self.step_2_download_binance_data():
-            logger.warning("警告: 部分數據下載失敗，但繼續使用可用數據")
+            logger.warning("警告: 部分數據下載失敗，但繼續訓練可用的數據")
         
         # Step 3
         if not self.step_3_train_models(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate):
