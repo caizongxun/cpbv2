@@ -29,8 +29,9 @@ class ManualLSTMCell(nn.Module):
         for weight in self.parameters():
             weight.data.uniform_(-std, std)
     
-    def forward(self, x, (h, c)):
-        """x: (batch, input_size), (h, c): (batch, hidden_size)"""
+    def forward(self, x, state):
+        """x: (batch, input_size), state: (h, c) where h,c are (batch, hidden_size)"""
+        h, c = state
         # Force GPU computation
         gates = torch.nn.functional.linear(x, self.weight_ih, self.bias_ih) + \
                 torch.nn.functional.linear(h, self.weight_hh, self.bias_hh)
@@ -45,7 +46,7 @@ class ManualLSTMCell(nn.Module):
         c_new = f * c + i * g
         h_new = o * torch.tanh(c_new)
         
-        return h_new, c_new
+        return h_new, (h_new, c_new)
 
 
 class Attention(nn.Module):
