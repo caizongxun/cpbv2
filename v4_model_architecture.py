@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-V4 Model Architecture: Seq2Seq LSTM with Attention Mechanism
+V4 Model Architecture: Seq2Seq LSTM with Attention Mechanism - GPU Optimized
 Goal: Predict next 10 OHLC candles based on previous 30 candles
 Features:
   - Encoder-Decoder structure (Seq2Seq)
   - Attention mechanism for weighted focus
   - Multi-output: predicts Open, High, Low, Close for 10 future candles
   - Dropout regularization to prevent overfitting
+  - All operations on GPU
 """
 
 import torch
@@ -15,7 +16,7 @@ import torch.nn.functional as F
 
 
 class Attention(nn.Module):
-    """Multi-head attention mechanism"""
+    """Multi-head attention mechanism - GPU optimized"""
     def __init__(self, hidden_size, num_heads=4):
         super(Attention, self).__init__()
         self.hidden_size = hidden_size
@@ -28,6 +29,9 @@ class Attention(nn.Module):
         self.key = nn.Linear(hidden_size, hidden_size)
         self.value = nn.Linear(hidden_size, hidden_size)
         self.fc_out = nn.Linear(hidden_size, hidden_size)
+        
+        # Register buffer for scaling (stays on same device as model)
+        self.register_buffer('scale', torch.tensor(1.0 / (self.head_dim ** 0.5)))
     
     def forward(self, query, key, value, mask=None):
         batch_size = query.shape[0]
@@ -42,8 +46,8 @@ class Attention(nn.Module):
         K = K.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
         V = V.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
         
-        # Attention scores
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        # Attention scores - all GPU operations
+        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
         
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float('-inf'))
@@ -81,7 +85,6 @@ class Encoder(nn.Module):
     
     def forward(self, x):
         # x: (batch_size, seq_len=30, input_size=4)  [O, H, L, C]
-        
         # LSTM forward
         lstm_out, (h_n, c_n) = self.lstm(x)  # lstm_out: (batch, 30, hidden_size)
         
@@ -139,11 +142,12 @@ class Decoder(nn.Module):
         
         # Use teacher forcing during training, autoregressive during inference
         if target_input is None:
-            # Inference mode: use last encoder output as input
-            # encoder_outputs shape: (batch_size, 30, hidden_size)
-            # We need (batch_size, 1, output_size)
-            # Use last hidden state to generate first prediction
-            current_input = torch.zeros(batch_size, 1, self.output_size, device=device, dtype=encoder_outputs.dtype)
+            # Inference mode: initialize with zeros on GPU
+            current_input = torch.zeros(
+                batch_size, 1, self.output_size, 
+                device=device, 
+                dtype=encoder_outputs.dtype
+            )
         else:
             current_input = target_input
         
@@ -165,7 +169,7 @@ class Decoder(nn.Module):
             combined = self.dropout(combined)
             
             # Project to hidden_size
-            combined = torch.relu(self.fc(combined))
+            combined = F.relu(self.fc(combined))
             
             # Generate output (batch_size, 1, output_size)
             output = self.output_layer(combined)
@@ -181,7 +185,7 @@ class Decoder(nn.Module):
 
 
 class Seq2SeqLSTM(nn.Module):
-    """Seq2Seq model: Encoder-Decoder with Attention"""
+    """Seq2Seq model: Encoder-Decoder with Attention - GPU Optimized"""
     def __init__(self, input_size=4, hidden_size=128, num_layers=2, dropout=0.3, 
                  steps_ahead=10, output_size=4):
         super(Seq2SeqLSTM, self).__init__()
@@ -205,18 +209,28 @@ class Seq2SeqLSTM(nn.Module):
         # Encode
         encoder_outputs, encoder_hidden, encoder_cell = self.encoder(x)
         
-        # Decode
-        # Use teacher forcing during training
-        if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
-            # Teacher forcing: use ground truth as input
-            target_input = target[:, :1, :]  # First target candle
-            predictions = self.decoder(
-                encoder_outputs, encoder_hidden, encoder_cell,
-                target_input=target_input,
-                steps_ahead=self.steps_ahead
-            )
+        # Decode with teacher forcing probability check on GPU
+        if target is not None:
+            # Use torch.rand on GPU, not Python random
+            use_teacher_forcing = torch.rand(1, device=x.device).item() < teacher_forcing_ratio
+            
+            if use_teacher_forcing:
+                # Teacher forcing: use ground truth as input
+                target_input = target[:, :1, :]  # First target candle
+                predictions = self.decoder(
+                    encoder_outputs, encoder_hidden, encoder_cell,
+                    target_input=target_input,
+                    steps_ahead=self.steps_ahead
+                )
+            else:
+                # Autoregressive: use previous prediction
+                predictions = self.decoder(
+                    encoder_outputs, encoder_hidden, encoder_cell,
+                    target_input=None,
+                    steps_ahead=self.steps_ahead
+                )
         else:
-            # Autoregressive: use previous prediction
+            # Inference: always autoregressive
             predictions = self.decoder(
                 encoder_outputs, encoder_hidden, encoder_cell,
                 target_input=None,
@@ -227,7 +241,9 @@ class Seq2SeqLSTM(nn.Module):
 
 
 if __name__ == "__main__":
-    # Test model
+    # Test model on GPU
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     batch_size = 8
     seq_len = 30  # Input sequence: 30 candles
     input_size = 4  # OHLC
@@ -240,18 +256,29 @@ if __name__ == "__main__":
         dropout=0.3,
         steps_ahead=steps_ahead,
         output_size=4
-    )
+    ).to(device)
     
     # Test input
-    x = torch.randn(batch_size, seq_len, input_size)
-    target = torch.randn(batch_size, steps_ahead, input_size)
+    x = torch.randn(batch_size, seq_len, input_size, device=device)
+    target = torch.randn(batch_size, steps_ahead, input_size, device=device)
+    
+    # Check GPU memory before
+    torch.cuda.reset_peak_memory_stats()
+    mem_before = torch.cuda.memory_allocated() / 1e9
     
     # Forward pass
     output = model(x, target, teacher_forcing_ratio=0.5)
     
-    print(f"Model architecture: Seq2Seq LSTM with Attention")
+    # Check GPU memory after
+    mem_after = torch.cuda.memory_allocated() / 1e9
+    
+    print(f"Model architecture: Seq2Seq LSTM with Attention (GPU Optimized)")
+    print(f"Device: {device}")
     print(f"Input shape: {x.shape}")
     print(f"Output shape: {output.shape}")
     print(f"Expected output: (batch_size={batch_size}, steps_ahead={steps_ahead}, features=4)")
-    print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters())}")
-    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(f"\nGPU Memory Before: {mem_before:.3f}GB")
+    print(f"GPU Memory After: {mem_after:.3f}GB")
+    print(f"Memory Used: {(mem_after - mem_before)*1000:.2f}MB")
+    print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
