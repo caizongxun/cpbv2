@@ -33,10 +33,22 @@ from io import BytesIO
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
-# Configure logging with more detail
+# Custom logger with real-time flushing
+class CoLabLogger(logging.Logger):
+    """Logger that flushes output immediately for Colab"""
+    
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=None):
+        super()._log(level, msg, args, exc_info=exc_info, extra=extra, stack_info=stack_info)
+        sys.stdout.flush()  # Force flush to see output immediately
+
+logging.setLoggerClass(CoLabLogger)
+
+# Configure logging with immediate flush
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - [%(levelname)s] - %(message)s'
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    stream=sys.stdout,
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -70,6 +82,7 @@ class GPUMemoryManager:
             allocated = GPUMemoryManager.get_gpu_memory_usage()
             reserved = GPUMemoryManager.get_gpu_memory_reserved()
             logger.info(f"  {step_name}: Allocated={allocated:.2f}GB, Reserved={reserved:.2f}GB")
+            sys.stdout.flush()
     
     @staticmethod
     def clear_gpu_memory():
@@ -100,13 +113,15 @@ class V4CoLabPipeline:
         
         # 強制使用 GPU
         if not torch.cuda.is_available():
-            logger.error("❌ GPU 不可用! 請在 Colab 中啟用 GPU")
+            logger.error("✗ GPU 不可用! 請在 Colab 中啟用 GPU")
+            sys.stdout.flush()
             sys.exit(1)
         
         self.device = torch.device('cuda')
         logger.info(f"✓ 設備: {self.device}")
         logger.info(f"✓ GPU: {torch.cuda.get_device_name(0)}")
         logger.info(f"✓ CUDA 版本: {torch.version.cuda}")
+        sys.stdout.flush()
         
         # Binance data.binance.vision base URL
         self.base_url = "https://data.binance.vision/data/spot/monthly/klines"
@@ -117,12 +132,14 @@ class V4CoLabPipeline:
         torch.backends.cudnn.enabled = True
         logger.info(f"✓ GPU 記憶體限制: 13GB")
         logger.info(f"✓ cuDNN 已啟用\n")
+        sys.stdout.flush()
     
     def step_1_setup_environment(self):
         """Step 1: Setup environment"""
         logger.info("\n" + "="*80)
         logger.info("STEP 1: 設定環境")
         logger.info("="*80)
+        sys.stdout.flush()
         
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +148,7 @@ class V4CoLabPipeline:
         logger.debug(f"數據目錄: {self.data_dir}")
         logger.debug(f"模型目錄: {self.models_dir}")
         logger.debug(f"結果目錄: {self.results_dir}")
+        sys.stdout.flush()
         
         if torch.cuda.is_available():
             logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -139,6 +157,7 @@ class V4CoLabPipeline:
             GPUMemoryManager.log_gpu_memory("初始化")
         
         logger.info("目錄已建立")
+        sys.stdout.flush()
     
     def step_2_download_binance_data(self):
         """Step 2: Download data from Binance (more data: 7000-10000 bars)"""
@@ -146,6 +165,7 @@ class V4CoLabPipeline:
         logger.info("STEP 2: 下載 Binance 數據 (需要 7000-10000 根K線)")
         logger.info("="*80)
         logger.info(f"幣種: {len(self.COINS)} 個, 時間框: {self.TIMEFRAMES}")
+        sys.stdout.flush()
         
         total_pairs = len(self.COINS) * len(self.TIMEFRAMES)
         completed = 0
@@ -165,11 +185,13 @@ class V4CoLabPipeline:
         
         logger.info(f"下載月份: {len(months_to_download)} 個月")
         logger.debug(f"月份範圍: {months_to_download[0]} ~ {months_to_download[-1]}\n")
+        sys.stdout.flush()
         
         for coin in self.COINS:
             for timeframe in self.TIMEFRAMES:
                 completed += 1
-                logger.info(f"[{completed}/{total_pairs}] {coin} {timeframe}...", end='')
+                logger.info(f"[{completed}/{total_pairs}] {coin} {timeframe}...", end=' ')
+                sys.stdout.flush()
                 
                 all_data = []
                 months_found = 0
@@ -180,6 +202,7 @@ class V4CoLabPipeline:
                         url = f"{self.base_url}/{coin}/{timeframe}/{coin}-{timeframe}-{year}-{month_str}.zip"
                         logger.debug(f"  嘗試下載: {year}-{month_str}")
                         response = requests.get(url, timeout=30)
+                        sys.stdout.flush()
                         
                         if response.status_code == 200:
                             with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
@@ -193,6 +216,7 @@ class V4CoLabPipeline:
                                             logger.debug(f"    成功: {len(df_month)} 行")
                     except Exception as e:
                         logger.debug(f"  {year}-{month_str} 失敗: {str(e)[:40]}")
+                    sys.stdout.flush()
                 
                 if len(all_data) > 0:
                     df = pd.concat(all_data, ignore_index=True)
@@ -208,18 +232,20 @@ class V4CoLabPipeline:
                     if len(df) >= 7000:
                         csv_path = self.data_dir / f"{coin}_{timeframe}.csv"
                         df[['Open', 'High', 'Low', 'Close', 'Volume']].to_csv(csv_path, index=False)
-                        logger.info(f" ✓ {len(df)} K線")
+                        logger.info(f"✓ {len(df)} K線")
                         successful.append(f"{coin}_{timeframe}")
                     else:
-                        logger.info(f" ✗ 數據不足 ({len(df)} < 7000)")
+                        logger.info(f"✗ 數據不足 ({len(df)} < 7000)")
                         failed.append(f"{coin}_{timeframe}")
                 else:
-                    logger.info(f" ✗ 無法下載")
+                    logger.info(f"✗ 無法下載")
                     failed.append(f"{coin}_{timeframe}")
+                sys.stdout.flush()
         
         logger.info(f"\n下載摘要: {len(successful)}/{total_pairs} 成功")
         if failed:
             logger.debug(f"失敗清單: {failed[:5]}..." if len(failed) > 5 else f"失敗清單: {failed}")
+        sys.stdout.flush()
         
         return len(successful) > 0
     
@@ -231,15 +257,19 @@ class V4CoLabPipeline:
         logger.info(f"預測目標: 30根 K線 → 下一個 10根 K線")
         logger.info(f"Epochs: {epochs}, LR: {learning_rate}")
         logger.info(f"GPU RAM 限制: 13GB")
+        sys.stdout.flush()
         
         batch_size = 8
         logger.info(f"Batch Size: {batch_size} (GPU 優化)\n")
+        sys.stdout.flush()
         
         data_files = sorted(list(self.data_dir.glob("*.csv")))
         logger.info(f"找到 {len(data_files)} 個數據文件\n")
+        sys.stdout.flush()
         
         if len(data_files) == 0:
             logger.error("沒有找到數據文件!")
+            sys.stdout.flush()
             return False
         
         training_results = {}
@@ -247,6 +277,7 @@ class V4CoLabPipeline:
         for idx, csv_file in enumerate(data_files, 1):
             pair_name = csv_file.stem
             logger.info(f"[{idx}/{len(data_files)}] 訓練 {pair_name}")
+            sys.stdout.flush()
             
             try:
                 GPUMemoryManager.log_gpu_memory(f"開始訓練 {pair_name}")
@@ -255,6 +286,7 @@ class V4CoLabPipeline:
                 logger.debug(f"  讀取: {csv_file}")
                 df = pd.read_csv(csv_file)
                 logger.debug(f"  原始行數: {len(df)}")
+                sys.stdout.flush()
                 
                 if len(df) < 7000:
                     logger.warning(f"  數據不足: {len(df)}")
@@ -293,6 +325,7 @@ class V4CoLabPipeline:
                 X = np.array(X, dtype=np.float32)
                 y = np.array(y, dtype=np.float32)
                 logger.debug(f"  序列: X={X.shape}, y={y.shape}")
+                sys.stdout.flush()
                 
                 if len(X) < 100:
                     logger.warning(f"  序列不足: {len(X)}")
@@ -326,6 +359,7 @@ class V4CoLabPipeline:
                     num_workers=0
                 )
                 logger.debug(f"  DataLoader 創建完成")
+                sys.stdout.flush()
                 
                 # Create model
                 logger.debug(f"  創建模型...")
@@ -344,6 +378,7 @@ class V4CoLabPipeline:
                 
                 total_params = sum(p.numel() for p in model.parameters())
                 logger.debug(f"  模型參數: {total_params:,}")
+                sys.stdout.flush()
                 
                 GPUMemoryManager.log_gpu_memory("模型載入後")
                 
@@ -355,6 +390,7 @@ class V4CoLabPipeline:
                 # 使用簡單的學習率調度 (StepLR)
                 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.5)
                 logger.debug(f"  學習率調度: StepLR (每30個epoch減半)")
+                sys.stdout.flush()
                 
                 # Training loop with early stopping
                 best_val_loss = float('inf')
@@ -363,6 +399,7 @@ class V4CoLabPipeline:
                 best_epoch = 0
                 
                 logger.debug(f"  開始訓練 (early stopping patience={patience})...")
+                sys.stdout.flush()
                 
                 for epoch in range(epochs):
                     # Train
@@ -389,6 +426,7 @@ class V4CoLabPipeline:
                         train_loss /= train_batches if train_batches > 0 else 1
                     except Exception as e:
                         logger.error(f"  訓練批次失敗: {str(e)[:60]}")
+                        sys.stdout.flush()
                         raise
                     
                     # Validate
@@ -410,12 +448,14 @@ class V4CoLabPipeline:
                         val_loss /= val_batches if val_batches > 0 else 1
                     except Exception as e:
                         logger.error(f"  驗證批次失敗: {str(e)[:60]}")
+                        sys.stdout.flush()
                         raise
                     
                     scheduler.step()
                     
                     if (epoch + 1) % 20 == 0:
                         logger.info(f"  Epoch {epoch+1:3d}/{epochs} - Train: {train_loss:.6f}, Val: {val_loss:.6f}")
+                        sys.stdout.flush()
                         GPUMemoryManager.log_gpu_memory(f"Epoch {epoch+1}")
                     else:
                         logger.debug(f"  Epoch {epoch+1:3d}/{epochs} - Train: {train_loss:.6f}, Val: {val_loss:.6f}")
@@ -434,6 +474,8 @@ class V4CoLabPipeline:
                         if patience_counter >= patience:
                             logger.debug(f"  早停 (epoch {epoch+1}, patience 已滿)")
                             break
+                    
+                    sys.stdout.flush()
                 
                 training_results[pair_name] = {
                     'status': 'success',
@@ -446,6 +488,7 @@ class V4CoLabPipeline:
                 }
                 
                 logger.info(f"  ✓ 完成 - Best Val Loss: {best_val_loss:.6f} (epoch {best_epoch})")
+                sys.stdout.flush()
                 
                 # Clean up GPU memory
                 del model, optimizer, criterion, scheduler
@@ -460,6 +503,7 @@ class V4CoLabPipeline:
                 logger.debug(f"    完整錯誤: {error_msg}")
                 training_results[pair_name] = {'status': 'failed', 'error': error_msg}
                 GPUMemoryManager.clear_gpu_memory()
+            sys.stdout.flush()
         
         # Save results
         results_path = self.results_dir / 'v4_training_results.json'
@@ -469,6 +513,7 @@ class V4CoLabPipeline:
         
         successful = sum(1 for r in training_results.values() if r['status'] == 'success')
         logger.info(f"\n訓練摘要: {successful}/{len(data_files)} 成功")
+        sys.stdout.flush()
         
         return successful > 0
     
@@ -479,27 +524,32 @@ class V4CoLabPipeline:
         logger.info("# Goal: Predict next 10 OHLC candles based on previous 30")
         logger.info("# GPU RAM Limit: 13GB")
         logger.info("#"*80)
+        sys.stdout.flush()
         
         try:
             self.step_1_setup_environment()
             
             if not self.step_2_download_binance_data():
                 logger.error("數據下載失敗")
+                sys.stdout.flush()
                 return False
             
             if not self.step_3_train_models(epochs=epochs, learning_rate=learning_rate):
                 logger.error("訓練失敗")
+                sys.stdout.flush()
                 return False
             
             logger.info("\n" + "#"*80)
             logger.info("# V4 訓練完成")
             logger.info("#"*80)
+            sys.stdout.flush()
             
             return True
         
         except Exception as e:
             logger.error(f"管道執行失敗: {str(e)}")
             logger.debug(f"完整錯誤信息: ", exc_info=True)
+            sys.stdout.flush()
             return False
 
 
