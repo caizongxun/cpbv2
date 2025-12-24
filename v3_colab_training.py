@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 V3 Complete Training Pipeline for Colab
-Steps: 1. Setup env 2. Download data from Binance 3. Train 40 models 4. Upload to HF
+Steps: 1. Setup env 2. Download data from Binance US 3. Train 40 models 4. Upload to HF
 """
 
 import os
@@ -72,9 +72,9 @@ class V3CoLabPipeline:
         logger.info(f"  Results: {self.results_dir}")
     
     def step_2_download_binance_data(self, limit: int = 3000):
-        """Step 2: Download 3000 candles from Binance for each coin-timeframe pair"""
+        """Step 2: Download 3000 candles from Binance US for each coin-timeframe pair"""
         logger.info("\n" + "="*80)
-        logger.info("STEP 2: Downloading data from Binance")
+        logger.info("STEP 2: Downloading data from Binance US")
         logger.info("="*80)
         
         try:
@@ -84,8 +84,21 @@ class V3CoLabPipeline:
             os.system('pip install python-binance -q')
             from binance.client import Client
         
-        # Initialize client (public API, no key needed for historical data)
-        client = Client()
+        # Initialize client with Binance US endpoint
+        try:
+            # Try Binance US endpoint first
+            client = Client(tld='us')
+            logger.info("Connected to Binance US")
+        except Exception as e:
+            logger.warning(f"Binance US not available: {e}. Trying alternative...")
+            try:
+                # Fallback: Use requests to hit Binance US API directly
+                import requests
+                client = self._create_binance_us_client()
+                logger.info("Using direct HTTP client for Binance US")
+            except Exception as e2:
+                logger.error(f"Failed to connect to Binance: {e2}")
+                return False
         
         total_pairs = len(self.COINS) * len(self.TIMEFRAMES)
         completed = 0
@@ -132,7 +145,33 @@ class V3CoLabPipeline:
         if failed:
             logger.warning(f"  Failed pairs: {failed}")
         
-        return len(failed) == 0
+        return len(failed) < (total_pairs * 0.5)  # Success if at least 50% downloaded
+    
+    def _create_binance_us_client(self):
+        """Create custom Binance US client using requests"""
+        import requests
+        
+        class BinanceUSClient:
+            def __init__(self):
+                self.base_url = 'https://api.binance.us/api'
+            
+            def get_historical_klines(self, symbol, interval, limit=1000):
+                """Fetch klines from Binance US"""
+                url = f'{self.base_url}/v3/klines'
+                params = {
+                    'symbol': symbol,
+                    'interval': interval,
+                    'limit': limit
+                }
+                
+                response = requests.get(url, params=params, timeout=10)
+                
+                if response.status_code != 200:
+                    raise Exception(f"API error: {response.status_code} - {response.text}")
+                
+                return response.json()
+        
+        return BinanceUSClient()
     
     def step_3_train_models(
         self,
