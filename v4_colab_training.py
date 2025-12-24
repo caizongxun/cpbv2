@@ -190,7 +190,8 @@ class V4CoLabPipeline:
         for coin in self.COINS:
             for timeframe in self.TIMEFRAMES:
                 completed += 1
-                logger.info(f"[{completed}/{total_pairs}] {coin} {timeframe}...", end=' ')
+                # 使用 print 而不是 logger.info 用於行內輸出
+                print(f"[{completed}/{total_pairs}] {coin} {timeframe}...", end=' ')
                 sys.stdout.flush()
                 
                 all_data = []
@@ -232,13 +233,13 @@ class V4CoLabPipeline:
                     if len(df) >= 7000:
                         csv_path = self.data_dir / f"{coin}_{timeframe}.csv"
                         df[['Open', 'High', 'Low', 'Close', 'Volume']].to_csv(csv_path, index=False)
-                        logger.info(f"✓ {len(df)} K線")
+                        print(f"✓ {len(df)} K線")
                         successful.append(f"{coin}_{timeframe}")
                     else:
-                        logger.info(f"✗ 數據不足 ({len(df)} < 7000)")
+                        print(f"✗ 數據不足 ({len(df)} < 7000)")
                         failed.append(f"{coin}_{timeframe}")
                 else:
-                    logger.info(f"✗ 無法下載")
+                    print(f"✗ 無法下載")
                     failed.append(f"{coin}_{timeframe}")
                 sys.stdout.flush()
         
