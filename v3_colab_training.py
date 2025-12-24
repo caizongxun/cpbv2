@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-V3 Complete Training Pipeline for Colab (YFinance)
-Steps: 1. Setup env 2. Download data from Yahoo Finance 3. Train 40 models 4. Upload to HF
+V3 Complete Training Pipeline for Colab (Binance Data Vision)
+Steps: 1. Setup env 2. Download data from Binance data.binance.vision 3. Train 40 models 4. Upload to HF
 """
 
 import os
@@ -9,12 +9,16 @@ import sys
 import logging
 import json
 import warnings
+import zipfile
+import requests
 from pathlib import Path
 from typing import List, Dict
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+from io import BytesIO
+from datetime import datetime, timedelta
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -28,33 +32,17 @@ logger = logging.getLogger(__name__)
 
 
 class V3CoLabPipeline:
-    """Complete V3 training pipeline for Colab using YFinance"""
+    """Complete V3 training pipeline for Colab using Binance data.binance.vision"""
     
-    # 20 coins to train (mapped to Yahoo Finance symbols) - Fixed list
-    COINS_MAPPING = {
-        'BTC': 'BTC-USD',
-        'ETH': 'ETH-USD',
-        'BNB': 'BNB-USD',
-        'XRP': 'XRP-USD',
-        'LTC': 'LTC-USD',
-        'ADA': 'ADA-USD',
-        'SOL': 'SOL-USD',
-        'DOGE': 'DOGE-USD',
-        'AVAX': 'AVAX-USD',
-        'LINK': 'LINK-USD',
-        'AAVE': 'AAVE-USD',  # 替換 MATIC
-        'ATOM': 'ATOM-USD',
-        'NEAR': 'NEAR-USD',
-        'COMP': 'COMP-USD',  # 替換 FTM
-        'ARB': 'ARB-USD',
-        'OP': 'OP-USD',
-        'STX': 'STX-USD',
-        'INJ': 'INJ-USD',
-        'SHIB': 'SHIB-USD',  # 替換 LUNC
-        'LUNA': 'LUNA-USD'
-    }
+    # 20 coins to train
+    COINS = [
+        'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT',
+        'ADAUSDT', 'SOLUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT',
+        'AAVUSDT', 'ATOMUSDT', 'NEARUSDT', 'COMPUSDT', 'ARBUSDT',
+        'OPUSDT', 'STXUSDT', 'INJUSDT', 'SHIBUSDT', 'LUNAUSDT'
+    ]
     
-    TIMEFRAMES = ['15m', '1h']  # 40 models total
+    TIMEFRAMES = ['1h']  # Using 1h since 15m data is too large
     
     def __init__(self, base_dir: str = '/content'):
         self.base_dir = Path(base_dir)
@@ -64,16 +52,15 @@ class V3CoLabPipeline:
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logger.info(f"Using device: {self.device}")
+        
+        # Binance data.binance.vision base URL
+        self.base_url = "https://data.binance.vision/data/spot/monthly/klines"
     
     def step_1_setup_environment(self):
         """Step 1: Setup environment and install dependencies"""
         logger.info("\n" + "="*80)
         logger.info("STEP 1: 設定環境")
         logger.info("="*80)
-        
-        # Install yfinance
-        logger.info("安裝 yfinance...")
-        os.system('pip install yfinance -q')
         
         # Create directories
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -92,58 +79,88 @@ class V3CoLabPipeline:
         logger.info(f"  模型: {self.models_dir}")
         logger.info(f"  結果: {self.results_dir}")
     
-    def step_2_download_yfinance_data(self, days: int = 90):
-        """Step 2: Download 90 days of data from Yahoo Finance for each coin-timeframe pair"""
+    def step_2_download_binance_data(self):
+        """Step 2: Download data from Binance data.binance.vision (no region restrictions)"""
         logger.info("\n" + "="*80)
-        logger.info("STEP 2: 從 Yahoo Finance 下載數據 (無地區限制)")
+        logger.info("STEP 2: 從 Binance data.binance.vision 下載數據")
         logger.info("="*80)
-        logger.info(f"下載 {days} 天的數據，將生成模擬的 15m 和 1h 時間框")
+        logger.info("使用 Binance 官方公開數據源（無地區限制）")
         
-        try:
-            import yfinance as yf
-        except ImportError:
-            logger.error("yfinance 未安裝。正在安裝...")
-            os.system('pip install yfinance -q')
-            import yfinance as yf
-        
-        total_pairs = len(self.COINS_MAPPING) * len(self.TIMEFRAMES)
+        total_pairs = len(self.COINS) * len(self.TIMEFRAMES)
         completed = 0
         failed = []
         
-        for coin_name, yf_symbol in self.COINS_MAPPING.items():
+        # Get last 3 months of data
+        now = datetime.now()
+        months_to_download = [
+            (now.year, now.month),
+            ((now.year if now.month > 1 else now.year - 1), (now.month - 1 if now.month > 1 else 12)),
+            ((now.year if now.month > 2 else now.year - 1), (now.month - 2 if now.month > 2 else now.month + 10 if now.month > 2 else 12))
+        ]
+        
+        for coin in self.COINS:
             for timeframe in self.TIMEFRAMES:
                 try:
                     completed += 1
-                    logger.info(f"[{completed}/{total_pairs}] 下載 {coin_name} ({yf_symbol}) {timeframe}...")
+                    logger.info(f"[{completed}/{total_pairs}] 下載 {coin} {timeframe}...")
                     
-                    # Download daily data
-                    df = yf.download(yf_symbol, period=f'{days}d', progress=False, warn=False)
+                    all_data = []
                     
-                    if df.empty:
-                        raise ValueError(f"沒有接收到 {yf_symbol} 的數據")
+                    # Download multiple months to get enough data
+                    for year, month in months_to_download:
+                        try:
+                            # Construct the URL
+                            month_str = f"{month:02d}"
+                            url = f"{self.base_url}/{coin}/{timeframe}/{coin}-{timeframe}-{year}-{month_str}.zip"
+                            
+                            logger.info(f"  正在下載 {year}-{month_str}...")
+                            response = requests.get(url, timeout=30)
+                            
+                            if response.status_code == 200:
+                                # Extract and read CSV from zip
+                                with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
+                                    # Get the first (and usually only) file in the zip
+                                    file_list = zip_ref.namelist()
+                                    if file_list:
+                                        csv_filename = file_list[0]
+                                        with zip_ref.open(csv_filename) as f:
+                                            df_month = pd.read_csv(f, header=None)
+                                            all_data.append(df_month)
+                                            logger.info(f"    已下載 {len(df_month)} 列")
+                        except Exception as e:
+                            logger.warning(f"  {year}-{month_str} 下載失敗: {e}")
+                            continue
                     
-                    # Ensure we have required columns
-                    if 'Adj Close' in df.columns:
-                        df['Close'] = df['Adj Close']
-                    
-                    # Keep only needed columns
-                    df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
-                    df = df.reset_index(drop=True)
-                    
-                    # For 15m and 1h timeframes, expand the daily data
-                    if timeframe == '15m':
-                        df = self._expand_to_intraday(df, periods=26)  # ~6.5 hours
-                    elif timeframe == '1h':
-                        df = self._expand_to_intraday(df, periods=6)   # ~6 hours
-                    
-                    # Save
-                    csv_path = self.data_dir / f"{coin_name}_{timeframe}.csv"
-                    df.to_csv(csv_path, index=False)
-                    logger.info(f"  已保存 {len(df)} 根K線到 {csv_path}")
+                    if all_data:
+                        # Combine all months
+                        df = pd.concat(all_data, ignore_index=True)
+                        
+                        # Set column names
+                        df.columns = ['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume',
+                                    'CloseTime', 'QuoteVolume', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore']
+                        
+                        # Convert to numeric
+                        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                        
+                        # Remove NaN rows
+                        df = df.dropna()
+                        
+                        if len(df) > 0:
+                            # Save
+                            csv_path = self.data_dir / f"{coin}_{timeframe}.csv"
+                            df[['Open', 'High', 'Low', 'Close', 'Volume']].to_csv(csv_path, index=False)
+                            logger.info(f"  已保存 {len(df)} 根K線到 {csv_path}")
+                        else:
+                            logger.warning(f"  {coin} {timeframe} 沒有有效數據")
+                            failed.append(f"{coin}_{timeframe}")
+                    else:
+                        logger.error(f"  無法為 {coin} {timeframe} 下載任何數據")
+                        failed.append(f"{coin}_{timeframe}")
                     
                 except Exception as e:
-                    logger.error(f"下載 {coin_name} {timeframe} 失敗: {e}")
-                    failed.append(f"{coin_name}_{timeframe}")
+                    logger.error(f"下載 {coin} {timeframe} 失敗: {e}")
+                    failed.append(f"{coin}_{timeframe}")
         
         logger.info(f"\n數據下載摘要:")
         logger.info(f"  成功: {total_pairs - len(failed)}/{total_pairs}")
@@ -153,46 +170,12 @@ class V3CoLabPipeline:
         
         return len(failed) < (total_pairs * 0.5)  # Success if at least 50% downloaded
     
-    def _expand_to_intraday(self, df: pd.DataFrame, periods: int) -> pd.DataFrame:
-        """Expand daily data to intraday by adding realistic variation"""
-        expanded = []
-        
-        for idx, row in df.iterrows():
-            # Use iloc[0] instead of calling float() directly
-            daily_high = float(row['High'])
-            daily_low = float(row['Low'])
-            daily_open = float(row['Open'])
-            daily_close = float(row['Close'])
-            daily_volume = float(row['Volume'])
-            
-            for p in range(periods):
-                progress = p / periods
-                
-                # Generate realistic intraday price movement
-                noise = np.random.normal(0, 0.0015)  # 0.15% volatility
-                open_price = daily_open + (daily_close - daily_open) * progress * 0.8 + noise
-                close_price = daily_open + (daily_close - daily_open) * (progress + 1/periods) * 0.8 + np.random.normal(0, 0.0015)
-                
-                high = max(open_price, close_price) * (1 + abs(np.random.normal(0, 0.0008)))
-                low = min(open_price, close_price) * (1 - abs(np.random.normal(0, 0.0008)))
-                volume = daily_volume / periods * (1 + np.random.normal(0, 0.15))
-                
-                expanded.append({
-                    'Open': max(0.0001, open_price),
-                    'High': max(0.0001, high),
-                    'Low': max(0.0001, low),
-                    'Close': max(0.0001, close_price),
-                    'Volume': max(0, volume)
-                })
-        
-        return pd.DataFrame(expanded)
-    
     def step_3_train_models(self, epochs: int = 100, batch_size: int = 32, learning_rate: float = 0.001):
-        """Step 3: Train 40 models (20 coins × 2 timeframes)"""
+        """Step 3: Train 20 models (20 coins × 1 timeframe)"""
         logger.info("\n" + "="*80)
         logger.info("STEP 3: 訓練模型")
         logger.info("="*80)
-        logger.info(f"總共要訓練: {len(self.COINS_MAPPING) * len(self.TIMEFRAMES)} 個模型")
+        logger.info(f"總共要訓練: {len(self.COINS) * len(self.TIMEFRAMES)} 個模型")
         logger.info(f"Epochs: {epochs}, Batch size: {batch_size}, LR: {learning_rate}")
         
         # Import model components
@@ -207,11 +190,11 @@ class V3CoLabPipeline:
         
         training_results = {}
         
-        for idx, (coin_name, yf_symbol) in enumerate(self.COINS_MAPPING.items(), 1):
+        for idx, coin in enumerate(self.COINS, 1):
             for tf_idx, timeframe in enumerate(self.TIMEFRAMES, 1):
-                pair_name = f"{coin_name}_{timeframe}"
+                pair_name = f"{coin}_{timeframe}"
                 pair_idx = (idx-1)*len(self.TIMEFRAMES) + tf_idx
-                total = len(self.COINS_MAPPING) * len(self.TIMEFRAMES)
+                total = len(self.COINS) * len(self.TIMEFRAMES)
                 
                 logger.info(f"\n[{pair_idx}/{total}] 訓練 {pair_name}...")
                 
@@ -384,14 +367,14 @@ class V3CoLabPipeline:
     def run_full_pipeline(self, epochs: int = 100, batch_size: int = 32, learning_rate: float = 0.001):
         """Run complete pipeline"""
         logger.info("\n" + "#"*80)
-        logger.info("# V3 加密貨幣價格預測 - YFinance 版本 (無地區限制)")
+        logger.info("# V3 加密貨幣價格預測 - Binance data.binance.vision 版本")
         logger.info("#"*80)
         
         # Step 1
         self.step_1_setup_environment()
         
         # Step 2
-        if not self.step_2_download_yfinance_data(days=90):
+        if not self.step_2_download_binance_data():
             logger.warning("數據下載遇到問題。繼續使用可用的數據...")
         
         # Step 3
