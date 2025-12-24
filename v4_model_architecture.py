@@ -115,9 +115,18 @@ class Decoder(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size)
     
     def forward(self, encoder_outputs, encoder_hidden, encoder_cell, target_input=None, steps_ahead=10):
-        # encoder_outputs: (batch_size, 30, hidden_size)
-        # encoder_hidden: (num_layers, batch_size, hidden_size)
-        # target_input: (batch_size, 1, output_size) - first target (last candle from input)
+        """
+        Forward pass for decoder
+        Args:
+            encoder_outputs: (batch_size, 30, hidden_size)
+            encoder_hidden: (num_layers, batch_size, hidden_size)
+            encoder_cell: (num_layers, batch_size, hidden_size)
+            target_input: (batch_size, 1, output_size) - first target for teacher forcing
+            steps_ahead: number of steps to predict (10)
+        
+        Returns:
+            predictions: (batch_size, 10, 4)
+        """
         
         batch_size = encoder_outputs.shape[0]
         device = encoder_outputs.device
@@ -130,8 +139,11 @@ class Decoder(nn.Module):
         
         # Use teacher forcing during training, autoregressive during inference
         if target_input is None:
-            # Inference mode: use previous prediction as next input
-            current_input = encoder_outputs[:, -1:, :output_size]  # Last candle from encoder
+            # Inference mode: use last encoder output as input
+            # encoder_outputs shape: (batch_size, 30, hidden_size)
+            # We need (batch_size, 1, output_size)
+            # Use last hidden state to generate first prediction
+            current_input = torch.zeros(batch_size, 1, self.output_size, device=device, dtype=encoder_outputs.dtype)
         else:
             current_input = target_input
         
@@ -155,12 +167,12 @@ class Decoder(nn.Module):
             # Project to hidden_size
             combined = torch.relu(self.fc(combined))
             
-            # Generate output
-            output = self.output_layer(combined)  # (batch_size, 1, 4)
+            # Generate output (batch_size, 1, output_size)
+            output = self.output_layer(combined)
             predictions.append(output)
             
-            # Prepare next input
-            current_input = output  # Use predicted OHLC as next input
+            # Prepare next input: use predicted OHLC as next input
+            current_input = output
         
         # Concatenate all predictions
         predictions = torch.cat(predictions, dim=1)  # (batch_size, 10, 4)
