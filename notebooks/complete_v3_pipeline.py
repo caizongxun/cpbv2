@@ -2,52 +2,56 @@
 # ============================================================================
 # CPB Trading V3 Model Training - Complete Pipeline
 # ============================================================================
-# Version: 1.0.6 (Compatible version pinning)
+# Version: 1.0.7 (Colab-specific NumPy downgrade fix)
 # Date: 2025-12-24
 # GitHub: https://raw.githubusercontent.com/caizongxun/cpbv2/main/notebooks/complete_v3_pipeline.py
 # ============================================================================
 
 print("\n" + "="*80)
-print("CPB V3 Model Training Pipeline - v1.0.6")
-print("Updated: 2025-12-24 - Compatible Version Pinning")
+print("CPB V3 Model Training Pipeline - v1.0.7")
+print("Updated: 2025-12-24 - Colab-specific NumPy 1.26.4 fix")
 print("="*80 + "\n")
 
 import os
 import sys
 
 # ============================================================================
-# STEP 0: Aggressive Shell Cleanup with Compatible Versions
+# STEP 0: Colab-Specific NumPy Fix
 # ============================================================================
-print("[*] STEP 0: 強制清理環境 (Aggressive Cleanup)...")
-print("[!] 使用 pip cache 清理 + 強制卸載衝突包...\n")
+print("[*] STEP 0: 修複算 Colab NumPy 酋突 (Google Colab 預裝 NumPy 2.0.2 不相容)")
+print("[!] 重新安裝 NumPy 1.26.4 並使用 --ignore-installed...\n")
 
-# Clear pip cache
-os.system(f"{sys.executable} -m pip cache purge > /dev/null 2>&1")
-
-# Aggressive uninstall
-conflict_pkgs = [
-    "numpy", "scipy", "scikit-learn", "sklearn",
-    "tensorflow", "keras", "pandas"
-]
-
-for pkg in conflict_pkgs:
-    os.system(f"{sys.executable} -m pip uninstall -y {pkg} 2>&1 | grep -i uninstalling")
-
-print("\n[✓] 快取清理 + 完整卸載完成\n")
-print("[*] 安裝相容版本 (手動選擇補上是最新穩定版本)...\n")
-
-# Install with compatible pinning
+# Force downgrade to numpy 1.26.4 (compatible with scipy/sklearn)
 os.system(
-    f"{sys.executable} -m pip install --no-cache-dir "
-    "'numpy<2.0' scipy scikit-learn tensorflow pandas ccxt huggingface-hub "
-    "2>&1 | tail -8"
+    f"{sys.executable} -m pip install --ignore-installed --no-cache-dir numpy==1.26.4 > /dev/null 2>&1"
 )
 
-print("\n[✓] 環境重置完成\n")
+print("[✓] NumPy 重新安裝完成\n")
+print("[!] 正在重徕 Runtime 以套用新的 NumPy 版本...\n")
+
+# Force runtime restart by exiting
+import importlib.metadata
+try:
+    installed_version = importlib.metadata.version("numpy")
+    if installed_version == "1.26.4":
+        print(f"[✓] NumPy 1.26.4 已安裝成功")
+        print(f"[*] 重新啟動 Runtime...\n")
+        os._exit(0)  # Restart the runtime
+    else:
+        print(f"[!] NumPy 版本不符: {installed_version} (預期: 1.26.4)")
+        print(f"[*] 重新啟動 Runtime...\n")
+        os._exit(0)
+except Exception as e:
+    print(f"[!] 版本檢查錯誤: {e}")
+    os._exit(0)
 
 # ============================================================================
-# STEP 1: Configuration
+# STEP 1: Configuration (after restart)
 # ============================================================================
+print("\n" + "="*80)
+print("CPB V3 Model Training Pipeline - v1.0.7 (Resumed after restart)")
+print("="*80 + "\n")
+
 print("[*] STEP 1: 配置參數...\n")
 
 # User Configuration
@@ -73,9 +77,20 @@ print(f"    Epochs: {EPOCHS}")
 print(f"    K 棒數量: {DATA_LIMIT}\n")
 
 # ============================================================================
-# STEP 2: Import Libraries
+# STEP 2: Install Dependencies
 # ============================================================================
-print("[*] STEP 2: 導入所有依賴...\n")
+print("[*] STEP 2: 安裝其他依賴...\n")
+
+os.system(
+    f"{sys.executable} -m pip install -q scipy scikit-learn tensorflow pandas ccxt huggingface-hub 2>&1 | tail -3"
+)
+
+print("\n[✓] 依賴安裝完成\n")
+
+# ============================================================================
+# STEP 3: Import Libraries
+# ============================================================================
+print("[*] STEP 3: 導入所有依賴...\n")
 
 import numpy as np
 print(f"  [+] NumPy: {np.__version__}")
