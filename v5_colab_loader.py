@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CPB v5 Colab Remote Loader
+CPB v5 Colab Remote Loader - FIXED VERSION
 
 在 Google Colab 中執行:
 
@@ -69,14 +69,14 @@ os.chdir(repo_path)
 print(f"  Working directory: {os.getcwd()}")
 
 # ============================================================================
-# STEP 3: 下載完整訓練腳本
+# STEP 3: 下載修正的訓練腳本
 # ============================================================================
 
-print("\n[STEP 3/5] Loading training script...")
+print("\n[STEP 3/5] Loading training script (FIXED VERSION)...")
 
 try:
-    # 嘗試獲取完整訓練腳本
-    training_script_url = 'https://raw.githubusercontent.com/caizongxun/cpbv2/main/v5_training_complete.py'
+    # 优先使用修正版本
+    training_script_url = 'https://raw.githubusercontent.com/caizongxun/cpbv2/main/v5_training_complete_fixed.py'
     print(f"  Fetching from: {training_script_url}")
     
     response = requests.get(training_script_url, timeout=30)
@@ -87,15 +87,18 @@ try:
     print("  Script loaded successfully!")
     
 except Exception as e:
-    print(f"  Warning: Could not fetch v5_training_complete.py: {e}")
-    print("  Falling back to v5_training_structure.py")
+    print(f"  Warning: Could not fetch fixed version: {e}")
+    print("  Falling back to v5_training_complete.py")
     
-    # 備選方案：使用結構化訓練腳本
-    structure_url = 'https://raw.githubusercontent.com/caizongxun/cpbv2/main/v5_training_structure.py'
-    response = requests.get(structure_url, timeout=30)
-    response.raise_for_status()
-    training_code = response.text
-    print(f"  Downloaded {len(training_code)} characters")
+    try:
+        training_script_url = 'https://raw.githubusercontent.com/caizongxun/cpbv2/main/v5_training_complete.py'
+        response = requests.get(training_script_url, timeout=30)
+        response.raise_for_status()
+        training_code = response.text
+        print(f"  Downloaded {len(training_code)} characters")
+    except Exception as e2:
+        print(f"  Error: Could not fetch any training script: {e2}")
+        sys.exit(1)
 
 # ============================================================================
 # STEP 4: 執行訓練
@@ -134,19 +137,30 @@ if training_success:
     # 嘗試讀取結果
     results_file = '/content/all_models/model_v5/training_results.json'
     if os.path.exists(results_file):
-        with open(results_file) as f:
-            results = json.load(f)
-        
-        mape_values = [v['mape'] for v in results.values()]
-        print(f"\nResults Summary:")
-        print(f"  Total models trained: {len(results)}")
-        print(f"  Average MAPE: {sum(mape_values)/len(mape_values):.6f}")
-        print(f"  Best MAPE: {min(mape_values):.6f}")
-        print(f"  Worst MAPE: {max(mape_values):.6f}")
-        print(f"  Models below 0.02: {sum(1 for m in mape_values if m < 0.02)} / {len(mape_values)}")
-        
-        print(f"\nModels saved to: /content/all_models/model_v5/")
-        print(f"Results file: {results_file}")
+        try:
+            with open(results_file) as f:
+                results = json.load(f)
+            
+            if len(results) > 0:
+                mape_values = [v['mape'] for v in results.values() if 'mape' in v]
+                if mape_values:
+                    print(f"\nResults Summary:")
+                    print(f"  Total models trained: {len(results)}")
+                    print(f"  Average MAPE: {sum(mape_values)/len(mape_values):.6f}")
+                    print(f"  Best MAPE: {min(mape_values):.6f}")
+                    print(f"  Worst MAPE: {max(mape_values):.6f}")
+                    print(f"  Models below 0.02: {sum(1 for m in mape_values if m < 0.02)} / {len(mape_values)}")
+                else:
+                    print(f"  Warning: No MAPE values found in results")
+            else:
+                print(f"  Warning: No models were successfully trained")
+            
+            print(f"\nModels saved to: /content/all_models/model_v5/")
+            print(f"Results file: {results_file}")
+        except Exception as e:
+            print(f"  Error reading results: {e}")
+    else:
+        print(f"  Results file not found at {results_file}")
     
     print(f"\nNext step: Upload to Hugging Face")
     print(f"  huggingface-cli upload zongowo111/cpb-models \\")
