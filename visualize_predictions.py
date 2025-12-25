@@ -7,6 +7,7 @@ Loads models from HF and shows real vs predicted price trends
 import os
 import sys
 import torch
+import torch.nn as nn
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -16,10 +17,8 @@ warnings.filterwarnings('ignore')
 
 try:
     import plotly.graph_objects as go
-    import plotly.express as px
     from plotly.subplots import make_subplots
 except ImportError:
-    print("Installing required packages...")
     os.system('pip install plotly -q')
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -27,23 +26,88 @@ except ImportError:
 try:
     from huggingface_hub import hf_hub_download
 except ImportError:
-    print("Installing huggingface-hub...")
     os.system('pip install huggingface-hub -q')
     from huggingface_hub import hf_hub_download
 
 try:
     import yfinance as yf
 except ImportError:
-    print("Installing yfinance...")
     os.system('pip install yfinance -q')
     import yfinance as yf
+
+# ========== MODEL ARCHITECTURE ==========
+
+class TransformerModel(nn.Module):
+    """Transformer model for sequence-to-sequence prediction"""
+    def __init__(self, input_size=4, d_model=64, nhead=4, num_layers=2, dim_feedforward=256, seq_len=30, forecast_len=10):
+        super().__init__()
+        self.input_size = input_size
+        self.d_model = d_model
+        self.seq_len = seq_len
+        self.forecast_len = forecast_len
+        
+        # Input projection
+        self.input_proj = nn.Linear(input_size, d_model)
+        
+        # Positional encoding
+        self.pos_encoder = nn.Parameter(torch.randn(1, seq_len, d_model) * 0.1)
+        
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            batch_first=True,
+            dropout=0.1
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # Decoder
+        self.forecast_start = nn.Parameter(torch.randn(1, 1, d_model) * 0.1)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            batch_first=True,
+            dropout=0.1
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        
+        # Output projection
+        self.output_proj = nn.Linear(d_model, input_size)
+    
+    def forward(self, x):
+        # x shape: (batch, seq_len, input_size)
+        batch_size = x.size(0)
+        
+        # Project input
+        x = self.input_proj(x)  # (batch, seq_len, d_model)
+        x = x + self.pos_encoder
+        
+        # Encode
+        memory = self.encoder(x)
+        
+        # Decode
+        tgt = self.forecast_start.expand(batch_size, -1, -1)
+        output = self.decoder(tgt, memory)
+        
+        # Generate full forecast
+        forecast = [output]
+        for _ in range(self.forecast_len - 1):
+            output = self.decoder(output, memory)
+            forecast.append(output)
+        
+        output = torch.cat(forecast, dim=1)
+        output = self.output_proj(output)
+        
+        return output
+
 
 # ========== CONFIG ==========
 
 REPO_ID = "zongowo111/cpb-models"
 MODEL_FOLDER = "model_v4"
 
-# 支持的幣種
 COINS = [
     'BTC', 'ETH', 'BNB', 'XRP', 'LTC',
     'ADA', 'SOL', 'DOGE', 'AVAX', 'LINK',
@@ -59,16 +123,24 @@ print("="*60 + "\n")
 
 # ========== HELPER FUNCTIONS ==========
 
-def get_model_path(coin, timeframe):
-    """Get local model path"""
-    return f"{coin}USDT_{timeframe}.pt"
+def build_model():
+    """Build model architecture"""
+    return TransformerModel(
+        input_size=4,
+        d_model=64,
+        nhead=4,
+        num_layers=2,
+        dim_feedforward=256,
+        seq_len=30,
+        forecast_len=10
+    )
 
 
 def download_model(coin, timeframe):
     """Download model from HF"""
     try:
-        model_name = get_model_path(coin, timeframe)
-        print(f"Downloading {model_name}...", end=' ', flush=True)
+        model_name = f"{coin}USDT_{timeframe}.pt"
+        print(f"  {model_name:20s}", end=' ', flush=True)
         
         model_path = hf_hub_download(
             repo_id=REPO_ID,
@@ -79,19 +151,34 @@ def download_model(coin, timeframe):
         print("✓")
         return model_path
     except Exception as e:
-        print(f"✗ {e}")
+        print(f"✗ {str(e)[:30]}")
+        return None
+
+
+def load_model_state(model_path):
+    """Load model from state dict"""
+    try:
+        model = build_model()
+        state_dict = torch.load(model_path, map_location='cpu')
+        
+        # Handle both direct state_dict and wrapped state_dict
+        if isinstance(state_dict, dict) and 'model_state_dict' in state_dict:
+            state_dict = state_dict['model_state_dict']
+        
+        model.load_state_dict(state_dict)
+        return model
+    except Exception as e:
+        print(f"    Load error: {e}")
         return None
 
 
 def get_crypto_data(symbol, timeframe, days=7):
     """Get cryptocurrency price data from yfinance"""
     try:
-        # Map timeframe to yfinance interval
         interval_map = {'15m': '15m', '1h': '1h'}
         interval = interval_map.get(timeframe, '1h')
         
         ticker = f"{symbol}-USD"
-        print(f"  Fetching {ticker} ({timeframe})...", end=' ', flush=True)
         
         df = yf.download(
             ticker,
@@ -102,15 +189,11 @@ def get_crypto_data(symbol, timeframe, days=7):
         )
         
         if len(df) == 0:
-            print("✗ No data")
             return None
         
-        # Normalize data
         data = df[['Open', 'High', 'Low', 'Close']].values.astype(np.float32)
-        print(f"✓ ({len(data)} candles)")
         return data
     except Exception as e:
-        print(f"✗ {e}")
         return None
 
 
@@ -119,7 +202,7 @@ def normalize_data(data):
     data_min = data.min(axis=0, keepdims=True)
     data_max = data.max(axis=0, keepdims=True)
     data_range = data_max - data_min
-    data_range[data_range == 0] = 1  # Avoid division by zero
+    data_range[data_range == 0] = 1
     return (data - data_min) / data_range, data_min, data_max
 
 
@@ -132,50 +215,41 @@ def denormalize_data(data, data_min, data_max):
 def predict_prices(model, data, lookback=30, forecast_len=10):
     """Generate predictions using the model"""
     try:
-        # Normalize
         normalized, data_min, data_max = normalize_data(data)
         
-        # Prepare input
         if len(normalized) < lookback:
             return None
         
-        # Use last lookback window
         input_seq = torch.FloatTensor(normalized[-lookback:]).unsqueeze(0)
         
-        # Predict
         model.eval()
         with torch.no_grad():
             forecast = model(input_seq)
         
-        # Denormalize (use Close prices for visualization)
-        forecast_np = forecast[0, :, 3].cpu().numpy()  # Column 3 = Close
+        forecast_np = forecast[0, :, 3].cpu().numpy()
         forecast_denorm = denormalize_data(
             forecast_np.reshape(-1, 1),
             data_min[3:4],
             data_max[3:4]
         ).flatten()
         
-        # Actual close prices
         actual_close = data[-forecast_len:, 3]
         
         return actual_close, forecast_denorm[:forecast_len]
     except Exception as e:
-        print(f"  Prediction error: {e}")
         return None
 
 
 def create_visualization(predictions_dict):
     """Create interactive Plotly visualization"""
-    print("\nCreating visualization...")
+    print("Creating visualization...")
     
-    # Count valid predictions
     valid_preds = {k: v for k, v in predictions_dict.items() if v is not None}
     
     if not valid_preds:
-        print("No valid predictions to visualize")
+        print("No valid predictions")
         return None
     
-    # Create subplots (4 rows x 5 cols for 20 coins)
     rows, cols = 4, 5
     
     fig = make_subplots(
@@ -184,7 +258,6 @@ def create_visualization(predictions_dict):
         specs=[[{} for _ in range(cols)] for _ in range(rows)]
     )
     
-    # Add traces
     plot_idx = 0
     for key in sorted(valid_preds.keys()):
         actual, predicted = valid_preds[key]
@@ -194,50 +267,40 @@ def create_visualization(predictions_dict):
         
         x_vals = list(range(1, len(actual) + 1))
         
-        # Actual prices
         fig.add_trace(
             go.Scatter(
-                x=x_vals,
-                y=actual,
+                x=x_vals, y=actual,
                 mode='lines+markers',
                 name='Actual',
                 line=dict(color='#2180a0', width=2),
                 marker=dict(size=4),
-                hovertemplate='Step %{x}<br>Price: $%{y:.2f}<extra></extra>'
+                hovertemplate='Step %{x}<br>$%{y:.2f}<extra></extra>',
+                showlegend=(plot_idx == 0)
             ),
             row=row, col=col
         )
         
-        # Predicted prices
         fig.add_trace(
             go.Scatter(
-                x=x_vals,
-                y=predicted,
+                x=x_vals, y=predicted,
                 mode='lines+markers',
                 name='Predicted',
                 line=dict(color='#ff6b9d', width=2, dash='dash'),
                 marker=dict(size=4),
-                hovertemplate='Step %{x}<br>Price: $%{y:.2f}<extra></extra>'
+                hovertemplate='Step %{x}<br>$%{y:.2f}<extra></extra>',
+                showlegend=(plot_idx == 0)
             ),
             row=row, col=col
         )
         
-        # Calculate metrics
-        mse = np.mean((actual - predicted) ** 2)
-        mae = np.mean(np.abs(actual - predicted))
-        
         plot_idx += 1
-    
-    # Update layout
-    fig.update_xaxes(title_text="Step", row=rows, col=1)
-    fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
     
     fig.update_layout(
         title="CPB v4 Transformer: Actual vs Predicted Prices",
-        height=1200,
+        height=1400,
         showlegend=True,
         hovermode='closest',
-        font=dict(size=10)
+        font=dict(size=9)
     )
     
     return fig
@@ -272,7 +335,7 @@ def create_summary_table(predictions_dict):
 # ========== MAIN ==========
 
 if __name__ == "__main__":
-    print("\nStep 1: Download Models")
+    print("Step 1: Download Models")
     print("-" * 60)
     
     models = {}
@@ -280,11 +343,9 @@ if __name__ == "__main__":
         for timeframe in TIMEFRAMES:
             model_path = download_model(coin, timeframe)
             if model_path:
-                try:
-                    model = torch.load(model_path, map_location='cpu')
+                model = load_model_state(model_path)
+                if model:
                     models[f"{coin}_{timeframe}"] = model
-                except Exception as e:
-                    print(f"  Error loading {coin}_{timeframe}: {e}")
     
     print(f"\nLoaded {len(models)} models\n")
     
@@ -292,39 +353,44 @@ if __name__ == "__main__":
         print("No models loaded")
         sys.exit(1)
     
-    print("\nStep 2: Fetch Price Data")
+    print("Step 2: Fetch Price Data & Predict")
     print("-" * 60)
     
     predictions = {}
     for key in sorted(models.keys()):
         coin, timeframe = key.split('_')
-        print(f"\n{coin} {timeframe}:")
         
-        # Get data
         data = get_crypto_data(coin, timeframe, days=7)
         if data is None:
+            print(f"{key:20s} No data available")
             continue
         
-        # Predict
+        print(f"{key:20s} {len(data):4d} candles", end=' ', flush=True)
+        
         model = models[key]
         result = predict_prices(model, data)
+        
         if result is not None:
             predictions[key] = result
+            actual, pred = result
+            mae = np.mean(np.abs(actual - pred))
+            print(f"MAE: ${mae:.2f} ✓")
+        else:
+            print("✗")
     
-    print(f"\n\nGenerated {len(predictions)} predictions\n")
+    print(f"\nGenerated {len(predictions)} predictions\n")
     
-    # Summary table
-    print("\nPerformance Metrics")
-    print("=" * 60)
-    summary_df = create_summary_table(predictions)
-    print(summary_df.to_string(index=False))
-    
-    # Create visualization
-    fig = create_visualization(predictions)
-    if fig:
-        output_file = "cpb_predictions_visualization.html"
-        fig.write_html(output_file)
-        print(f"\n✓ Visualization saved to: {output_file}")
-        print(f"Open in browser: file://{os.path.abspath(output_file)}")
+    if predictions:
+        print("\nPerformance Metrics")
+        print("=" * 80)
+        summary_df = create_summary_table(predictions)
+        print(summary_df.to_string(index=False))
+        
+        fig = create_visualization(predictions)
+        if fig:
+            output_file = "cpb_predictions_visualization.html"
+            fig.write_html(output_file)
+            print(f"\n✓ Saved: {output_file}")
+            print(f"URL: file://{os.path.abspath(output_file)}")
     
     print("\nDone!")
