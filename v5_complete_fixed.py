@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CPB v5.0.4: Complete Training Pipeline - LSTM Encoder-Decoder with Attention
+CPB v5.0.5: Complete Training Pipeline - LSTM Encoder-Decoder with Attention
 Fixed: Proper bidirectional LSTM hidden state management
 Device: CUDA (GPU) or CPU
 """
@@ -52,7 +52,7 @@ CONFIG = {
 
 class LSTMEncoderDecoderV5(nn.Module):
     """
-    LSTM Encoder-Decoder with Attention (V5.0.4)
+    LSTM Encoder-Decoder with Attention (V5.0.5)
     
     Key fixes:
     - Bidirectional encoder output: (batch, seq, hidden*2)
@@ -210,7 +210,7 @@ def train_model(model, train_loader, val_loader, epochs=3, lr=0.001, device='cud
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=1, verbose=False
+        optimizer, mode='min', factor=0.5, patience=1
     )
     
     best_val_loss = float('inf')
@@ -271,7 +271,7 @@ def main():
     """Main training pipeline"""
     
     logger.info("=" * 70)
-    logger.info("CPB v5.0.4: Complete Training Pipeline")
+    logger.info("CPB v5.0.5: Complete Training Pipeline")
     logger.info("=" * 70)
     logger.info(f"Device: {DEVICE}")
     logger.info(f"Total models: {len(CONFIG['coins']) * len(CONFIG['timeframes'])}")
