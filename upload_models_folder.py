@@ -2,12 +2,13 @@
 """
 Upload entire v4_models folder to HF in single call
 Avoids API rate limiting by uploading folder instead of individual files
+Auto-creates repo if it doesn't exist
 """
 
 import os
 import sys
 from pathlib import Path
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, create_repo
 import time
 
 # ========== SETUP ==========
@@ -71,6 +72,21 @@ except Exception as e:
     print(f"Error: Invalid token - {e}")
     sys.exit(1)
 
+# Create repo if doesn't exist
+print("Checking repository...")
+try:
+    create_repo(
+        repo_id=REPO_ID,
+        repo_type="dataset",
+        private=False,
+        exist_ok=True,
+        token=token
+    )
+    print(f"Repository ready: {REPO_ID}\n")
+except Exception as e:
+    print(f"Error creating repo: {e}")
+    sys.exit(1)
+
 print("="*60)
 print("Uploading entire folder...")
 print("(This may take a few minutes)")
@@ -85,7 +101,8 @@ try:
         repo_id=REPO_ID,
         repo_type="dataset",
         path_in_repo=FOLDER_PATH,
-        commit_message="Add CPB v4 Transformer Models"
+        commit_message="Add CPB v4 Transformer Models",
+        token=token
     )
     
     elapsed = time.time() - start_time
