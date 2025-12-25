@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-CPB v5: Complete Training Pipeline (All-in-One) - FIXED v2
+CPB v5: Complete Training Pipeline (All-in-One) - FIXED v3
 
 Fixes:
-1. Feature dimension mismatch (40 vs 45)
-2. RSI calculation with proper indexing
-3. Deprecated pandas fillna method
+1. Feature dimension mismatch (40 vs 45) - v5.0.2
+2. RSI calculation with proper indexing - v5.0.1
+3. LSTM hidden state dimension (encoder bidirectional vs decoder) - v5.0.3
+4. Deprecated pandas fillna method
 
-Version: 5.0.2
+Version: 5.0.3
 Author: Cai Zongxun
 Date: 2025-12-25
 """
@@ -56,11 +57,10 @@ class Config:
     PREDICT_STEPS = 10
     KBARS_TO_DOWNLOAD = 8000
     
-    INPUT_SIZE = 40  # 精確的特徵數量
-    HIDDEN_SIZE = 256
-    NUM_LAYERS = 2
-    DROPOUT = 0.3
-    NUM_HEADS = 8
+    INPUT_SIZE = 40
+    HIDDEN_SIZE = 128  # 減少大小以加快訓練
+    NUM_LAYERS = 1  # 減少嚴格
+    DROPOUT = 0.2
     
     BATCH_SIZE = 64
     EPOCHS = 100
@@ -116,7 +116,7 @@ class TechnicalIndicators:
         return rsi
     
     @staticmethod
-    def calculate_all_features(df: pd.DataFrame) -> pd.DataFrame:
+    def calculate_all_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
         """計算所有技術指標 - 精確控制特徵數量"""
         df = df.copy()
         
@@ -182,9 +182,6 @@ class TechnicalIndicators:
         # Direction (1)
         df['price_direction'] = np.where(df['close'] > df['close'].shift(1), 1, -1)
         
-        # Fill NaN values - use ffill then bfill (not deprecated)
-        df = df.ffill().bfill()
-        
         # Select exactly 40 features
         feature_cols = [
             'hl2', 'hlc3', 'log_return',
@@ -199,7 +196,7 @@ class TechnicalIndicators:
             'price_direction'
         ]
         
-        # Should be 28 features, pad to 40
+        # Pad to 40 with lag features
         while len(feature_cols) < 40:
             for i, col in enumerate(feature_cols[:12]):
                 if len(feature_cols) < 40:
@@ -213,64 +210,88 @@ class TechnicalIndicators:
             if col not in df.columns:
                 df[col] = 0
         
+        # Fill NaN values - use ffill then bfill (not deprecated)
+        df = df.ffill().bfill()
+        
         return df[feature_cols].dropna(), df['close']
 
 # ============================================================================
-# MODEL ARCHITECTURE
+# MODEL ARCHITECTURE - FIXED
 # ============================================================================
 
-class Seq2SeqLSTMV5(nn.Module):
-    def __init__(self, input_size=40, hidden_size=256, num_layers=2, 
-                 predict_steps=10, dropout=0.3, num_heads=8):
+class SimpleLSTMV5(nn.Module):
+    """簡單 Seq2Seq LSTM - 整一的納下状態處理"""
+    def __init__(self, input_size=40, hidden_size=128, num_layers=1, 
+                 predict_steps=10, dropout=0.2):
         super().__init__()
         
         self.input_size = input_size
         self.hidden_size = hidden_size
+        self.num_layers = num_layers
         self.predict_steps = predict_steps
         
+        # Encoder - bidirectional
         self.encoder = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
+            dropout=0 if num_layers == 1 else dropout,
             bidirectional=True
         )
         
+        # 樣止約 (bidirectional encoder 輸出)
         self.attention = nn.MultiheadAttention(
-            embed_dim=hidden_size * 2,
-            num_heads=min(num_heads, hidden_size * 2 // 8),
+            embed_dim=hidden_size * 2,  # bidirectional 輸出
+            num_heads=4,
             dropout=dropout,
             batch_first=True
         )
         
+        # Decoder - unidirectional, take encoder's last hidden state
         self.decoder = nn.LSTM(
-            input_size=hidden_size * 2,
+            input_size=hidden_size * 2,  # attention 輸出
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
+            dropout=0 if num_layers == 1 else dropout,
             bidirectional=False
         )
         
-        self.fc1 = nn.Linear(hidden_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc_out = nn.Linear(64, 1)
+        # Output projection
+        self.fc1 = nn.Linear(hidden_size, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc_out = nn.Linear(32, 1)
         self.relu = nn.ReLU()
         self.dropout_layer = nn.Dropout(dropout)
     
     def forward(self, x):
-        encoder_output, (h_n, c_n) = self.encoder(x)
+        # Encoder
+        encoder_output, (h_n, c_n) = self.encoder(x)  # h_n: (2*num_layers, batch, hidden)
+        
+        # Attention
         context, _ = self.attention(encoder_output, encoder_output, encoder_output)
-        h_decoder = h_n[-1:].unsqueeze(0)
-        c_decoder = c_n[-1:].unsqueeze(0)
+        
+        # Prepare decoder initial hidden state
+        # Take forward and backward hidden states and concatenate
+        # h_n shape: (num_directions * num_layers, batch, hidden_size)
+        # For decoder, we only use one direction
+        h_decoder = h_n[-1:].unsqueeze(0) if self.num_layers == 1 else h_n[-1:]
+        c_decoder = c_n[-1:].unsqueeze(0) if self.num_layers == 1 else c_n[-1:]
+        
+        # Decoder input: repeat last context vector
         decoder_input = context[:, -1:, :].repeat(1, self.predict_steps, 1)
+        
+        # Decoder
         decoder_output, _ = self.decoder(decoder_input, (h_decoder, c_decoder))
+        
+        # Output projection
         output = self.relu(self.fc1(decoder_output))
         output = self.dropout_layer(output)
         output = self.relu(self.fc2(output))
         output = self.dropout_layer(output)
         output = self.fc_out(output)
+        
         return output
 
 # ============================================================================
@@ -436,11 +457,13 @@ def evaluate_model(model, test_loader, price_scaler, device):
 
 def main():
     print("="*60)
-    print("CPB v5: Complete Training Pipeline (FIXED v2)")
+    print("CPB v5: Complete Training Pipeline (FIXED v3)")
     print("="*60)
     print(f"Device: {Config.DEVICE}")
     print(f"Total models: {len(Config.COINS) * len(Config.TIMEFRAMES)}")
     print(f"Input features: {Config.INPUT_SIZE}")
+    print(f"Hidden size: {Config.HIDDEN_SIZE}")
+    print(f"Model layers: {Config.NUM_LAYERS}")
     print("="*60)
     
     results_by_coin = {}
@@ -484,13 +507,12 @@ def main():
                 )
                 
                 print(f"  Training...")
-                model = Seq2SeqLSTMV5(
+                model = SimpleLSTMV5(
                     input_size=Config.INPUT_SIZE,
                     hidden_size=Config.HIDDEN_SIZE,
                     num_layers=Config.NUM_LAYERS,
                     predict_steps=Config.PREDICT_STEPS,
-                    dropout=Config.DROPOUT,
-                    num_heads=Config.NUM_HEADS
+                    dropout=Config.DROPOUT
                 ).to(Config.DEVICE)
                 
                 model = train_model(model, train_loader, val_loader, Config.DEVICE, Config.EPOCHS)
@@ -506,7 +528,6 @@ def main():
                         'num_layers': Config.NUM_LAYERS,
                         'predict_steps': Config.PREDICT_STEPS,
                         'dropout': Config.DROPOUT,
-                        'num_heads': Config.NUM_HEADS
                     },
                     'metrics': metrics
                 }, model_path)
