@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Interactive visualization of CPB v4 model predictions vs actual prices
-Handles multiple model storage formats
+Exports as PNG/JPG image files
 """
 
 import os
@@ -33,6 +33,13 @@ try:
 except ImportError:
     os.system('pip install yfinance -q')
     import yfinance as yf
+
+# Install kaleido for image export
+try:
+    import kaleido
+except ImportError:
+    print("Installing kaleido for image export...")
+    os.system('pip install kaleido -q')
 
 # ========== MODEL ARCHITECTURE ==========
 
@@ -113,12 +120,10 @@ def download_model(coin, timeframe):
 
 
 def load_model_state(model_path):
-    """Try multiple loading strategies"""
     try:
         model = build_model()
         data = torch.load(model_path, map_location='cpu')
         
-        # Strategy 1: Direct state dict
         if isinstance(data, dict) and all(isinstance(k, str) for k in data.keys()):
             try:
                 model.load_state_dict(data)
@@ -126,7 +131,6 @@ def load_model_state(model_path):
             except:
                 pass
         
-        # Strategy 2: Wrapped in 'state_dict' key
         if isinstance(data, dict) and 'state_dict' in data:
             try:
                 model.load_state_dict(data['state_dict'])
@@ -134,7 +138,6 @@ def load_model_state(model_path):
             except:
                 pass
         
-        # Strategy 3: Wrapped in 'model_state_dict' key
         if isinstance(data, dict) and 'model_state_dict' in data:
             try:
                 model.load_state_dict(data['model_state_dict'])
@@ -142,12 +145,11 @@ def load_model_state(model_path):
             except:
                 pass
         
-        # Strategy 4: Already a model
         if isinstance(data, nn.Module):
             return data
         
         return None
-    except Exception as e:
+    except:
         return None
 
 
@@ -200,7 +202,8 @@ def predict_prices(model, data, lookback=30, forecast_len=10):
         return None
 
 
-def create_visualization(predictions_dict):
+def create_visualization_png(predictions_dict, output_file="cpb_predictions.png"):
+    """Create visualization and save as PNG"""
     valid_preds = {k: v for k, v in predictions_dict.items() if v is not None}
     
     if not valid_preds:
@@ -221,16 +224,80 @@ def create_visualization(predictions_dict):
         
         fig.add_trace(go.Scatter(x=x_vals, y=actual, mode='lines+markers',
                                 name='Actual', line=dict(color='#2180a0', width=2),
-                                marker=dict(size=4), showlegend=(plot_idx==0)),
+                                marker=dict(size=4), showlegend=(plot_idx==0),
+                                hovertemplate='$%{y:.2f}<extra></extra>'),
                      row=row, col=col)
         fig.add_trace(go.Scatter(x=x_vals, y=predicted, mode='lines+markers',
                                 name='Predicted', line=dict(color='#ff6b9d', width=2, dash='dash'),
-                                marker=dict(size=4), showlegend=(plot_idx==0)),
+                                marker=dict(size=4), showlegend=(plot_idx==0),
+                                hovertemplate='$%{y:.2f}<extra></extra>'),
                      row=row, col=col)
     
-    fig.update_layout(title="CPB v4 Transformer: Actual vs Predicted Prices",
-                     height=1400, showlegend=True, hovermode='closest')
-    return fig
+    fig.update_layout(
+        title="CPB v4 Transformer: Actual vs Predicted Prices",
+        height=1600,
+        width=2000,
+        showlegend=True,
+        hovermode='closest',
+        font=dict(size=10),
+        margin=dict(l=50, r=50, t=80, b=50)
+    )
+    
+    # Save as PNG
+    try:
+        fig.write_image(output_file, width=2000, height=1600, scale=2)
+        return output_file
+    except Exception as e:
+        print(f"PNG export error: {e}")
+        print("Falling back to HTML...")
+        html_file = output_file.replace('.png', '.html')
+        fig.write_html(html_file)
+        return html_file
+
+
+def create_individual_charts(predictions_dict, output_dir="./predictions_charts"):
+    """Create individual PNG charts for each model"""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    saved_files = []
+    for key in sorted(predictions_dict.keys()):
+        if predictions_dict[key] is None:
+            continue
+        
+        actual, predicted = predictions_dict[key]
+        x_vals = list(range(1, len(actual) + 1))
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=x_vals, y=actual, mode='lines+markers',
+                                name='Actual', line=dict(color='#2180a0', width=3),
+                                marker=dict(size=6)))
+        fig.add_trace(go.Scatter(x=x_vals, y=predicted, mode='lines+markers',
+                                name='Predicted', line=dict(color='#ff6b9d', width=3, dash='dash'),
+                                marker=dict(size=6)))
+        
+        mae = np.mean(np.abs(actual - predicted))
+        fig.update_layout(
+            title=f"{key} - MAE: ${mae:.2f}",
+            xaxis_title="Steps",
+            yaxis_title="Price (USD)",
+            height=600,
+            width=1000,
+            hovermode='x unified',
+            font=dict(size=12)
+        )
+        
+        output_file = f"{output_dir}/{key}.png"
+        try:
+            fig.write_image(output_file, width=1000, height=600, scale=2)
+            saved_files.append(output_file)
+            print(f"  ✓ {key}.png")
+        except:
+            html_file = output_file.replace('.png', '.html')
+            fig.write_html(html_file)
+            saved_files.append(html_file)
+            print(f"  ✓ {key}.html (fallback)")
+    
+    return saved_files
 
 
 def create_summary_table(predictions_dict):
@@ -294,15 +361,28 @@ if __name__ == "__main__":
     print(f"\nSuccessfully predicted: {count}/40\n")
     
     if predictions:
-        print("\nPerformance Metrics")
+        print("Performance Metrics")
         print("=" * 80)
         print(create_summary_table(predictions).to_string(index=False))
         
-        print("\nCreating visualization...")
-        fig = create_visualization(predictions)
-        if fig:
-            fig.write_html("cpb_predictions_visualization.html")
-            print("✓ Saved: cpb_predictions_visualization.html")
+        # Create combined visualization
+        print("\nStep 3: Export Images")
+        print("-" * 60)
+        print("Creating combined chart...")
+        output_file = create_visualization_png(predictions, "cpb_predictions_combined.png")
+        if output_file:
+            print(f"✓ Saved: {output_file}")
+        
+        # Create individual charts
+        print("\nCreating individual charts...")
+        saved_files = create_individual_charts(predictions)
+        print(f"✓ Saved {len(saved_files)} individual charts")
+        
+        print("\n" + "="*60)
+        print("Files saved:")
+        print(f"  - cpb_predictions_combined.png (4x5 grid)")
+        print(f"  - predictions_charts/ ({len(saved_files)} individual PNG files)")
+        print("="*60)
     else:
         print("No predictions generated")
     
